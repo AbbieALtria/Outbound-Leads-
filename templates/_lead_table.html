@@ -61,7 +61,10 @@
         {% endif %}
       </td>
       <td><span class="score">{{ lead['score'] }}</span></td>
-      <td class="hook small">{{ lead['call_hook'] }}</td>
+      <td class="hook small">
+        {% if lead['call_hook'] %}{{ lead['call_hook'] }}
+        {% else %}<span class="dim">— no angle for this campaign</span>{% endif %}
+      </td>
       {% if show_date %}<td class="nowrap dim small">{{ lead['pulled_date'] }}</td>{% endif %}
       <td><input class="notes" type="text" value="{{ lead['notes'] }}" placeholder="notes…"></td>
     </tr>

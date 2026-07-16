@@ -66,10 +66,10 @@ def evaluate(lead, rules):
             if text:
                 hooks.append(_fmt(text, lead))
 
-    # Local angle is neutral and useful for every campaign.
-    city, state = (lead["city"] or ""), (lead["state"] or "")
-    if city and state:
-        hooks.append(f"Local angle: rank for '[service] in {city}, {state}'")
+    # Hooks are signal-driven only. No generic filler line: if nothing fired,
+    # the lead simply has no angle for this campaign (score 0) and should be
+    # skipped — a blank hook is honest information. Standing script lines belong
+    # in VICIdial, not here.
     return score, " | ".join(hooks)
 
 

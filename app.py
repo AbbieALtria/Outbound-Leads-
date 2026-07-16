@@ -39,6 +39,18 @@ app.secret_key = (os.environ.get("SECRET_KEY")
 db.init_db()
 _seed_conn = db.connect()
 users.ensure_admin(_seed_conn)
+
+# Bump when scoring/hook logic changes, so stored score+call_hook are refreshed
+# once on the next start instead of showing stale hooks.
+SCORING_VERSION = "2"
+if db.get_setting(_seed_conn, "scoring_version") != SCORING_VERSION:
+    _active = db.get_setting(_seed_conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN)
+    _camp = _seed_conn.execute(
+        "SELECT * FROM campaigns WHERE slug = ?", (_active,)).fetchone()
+    if _camp:
+        scoring.rescore_all(_seed_conn, _camp)
+    db.set_setting(_seed_conn, "scoring_version", SCORING_VERSION)
+    _seed_conn.commit()
 _seed_conn.close()
 
 _pull_lock = threading.Lock()
