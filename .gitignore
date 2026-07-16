@@ -1,0 +1,18 @@
+# --- secrets & data (NEVER commit) ---
+.env
+*.db
+*.sqlite3
+leads_*.csv
+seen_leads.sqlite3
+rotation_state.json
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- editor / os ---
+.claude/settings.local.json
+.DS_Store
+Thumbs.db

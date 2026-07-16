@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Settings — SEO Leads{% endblock %}
+{% block content %}
+
+<div class="settings-grid">
+
+  <section class="card">
+    <h2>General</h2>
+    <form method="post" action="{{ url_for('save_general_settings') }}" class="stack-form">
+      <label>Daily lead target
+        <input type="number" name="target" min="1" max="1000" value="{{ target }}">
+      </label>
+      <label>Default industry
+        <select name="default_industry">
+          {% for ind in industries %}
+          <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == default_industry }}>{{ ind['label'] }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="chk-row">
+        <input type="checkbox" name="contact_enrichment" {{ 'checked' if contact_enrichment }}>
+        Ask Outscraper for emails &amp; contact people (owner/GM) — costs extra credits per lead
+      </label>
+      <label class="chk-row">
+        <input type="checkbox" name="phone_validation" {{ 'checked' if phone_validation }}>
+        Validate phone numbers during each pull (line type + drop dead numbers) — costs extra credits
+      </label>
+      <button type="submit" class="primary">Save</button>
+    </form>
+    <div class="api-status">
+      Outscraper API key:
+      {% if api_key_set %}
+        <span class="badge badge-ok">configured</span>
+      {% else %}
+        <span class="badge badge-hot">missing</span>
+        <p class="dim small">Set <code>OUTSCRAPER_API_KEY=your_key</code> in a <code>.env</code> file
+        next to <code>app.py</code>, or as an environment variable, then restart the app.
+        The key is never stored in the database.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>Campaigns</h2>
+    <p class="dim small">A campaign decides which signals make a lead "hot" and the call-hook wording —
+    the same lead pool serves any offer. Activating one re-scores every lead. Presets can't be deleted.</p>
+    <table class="mini">
+      <tr><th></th><th>Campaign</th><th>Audience</th><th>Goal</th><th></th></tr>
+      {% for c in campaigns %}
+      <tr class="{{ 'active-campaign' if c['slug'] == active_campaign }}">
+        <td>
+          <form method="post" action="{{ url_for('activate_campaign') }}">
+            <input type="hidden" name="slug" value="{{ c['slug'] }}">
+            {% if c['slug'] == active_campaign %}
+              <span class="badge badge-ok">active</span>
+            {% else %}
+              <button type="submit">Activate</button>
+            {% endif %}
+          </form>
+        </td>
+        <td><strong>{{ c['name'] }}</strong>{{ ' (preset)' if c['is_preset'] else '' }}</td>
+        <td>{{ c['audience']|upper }}</td>
+        <td>{{ 'Appointment setting' if c['goal'] == 'appointment' else 'Close on call' }}</td>
+        <td class="nowrap">
+          {% if not c['is_preset'] %}
+          <form method="post" action="{{ url_for('delete_campaign', campaign_id=c['id']) }}"
+                onsubmit="return confirm('Delete campaign {{ c['name'] }}?')">
+            <button type="submit" class="danger">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <form method="post" action="{{ url_for('add_campaign') }}" class="inline-form" style="margin-top:12px;">
+      <input type="text" name="name" placeholder="New campaign name" required>
+      <label class="dim small">based on
+        <select name="base">
+          {% for c in campaigns %}<option value="{{ c['slug'] }}">{{ c['name'] }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="dim small">audience
+        <select name="audience"><option value="b2b">B2B</option><option value="b2c">B2C</option></select>
+      </label>
+      <label class="dim small">goal
+        <select name="goal"><option value="close">Close on call</option><option value="appointment">Appointment setting</option></select>
+      </label>
+      <button type="submit" class="primary">Add campaign</button>
+    </form>
+    <p class="dim small">New campaigns copy the scoring rules of the "based on" preset — a starting point you can refine later.</p>
+  </section>
+
+  <section class="card">
+    <h2>Cities</h2>
+    <form method="post" action="{{ url_for('add_city') }}" class="inline-form">
+      <input type="text" name="name" placeholder="City" required>
+      <input type="text" name="state" placeholder="ST" maxlength="2" size="3" required>
+      <button type="submit" class="primary">Add</button>
+    </form>
+    <table class="mini">
+      {% for c in cities %}
+      <tr class="{{ 'disabled-row' if not c['enabled'] }}">
+        <td>{{ c['name'] }}, {{ c['state'] }}</td>
+        <td class="dim small">{{ 'last pulled ' + c['last_pulled_at'][:16].replace('T', ' ') if c['last_pulled_at'] else 'never pulled' }}</td>
+        <td class="nowrap actions">
+          <form method="post" action="{{ url_for('toggle_city', city_id=c['id']) }}">
+            <button type="submit">{{ 'Disable' if c['enabled'] else 'Enable' }}</button>
+          </form>
+          <form method="post" action="{{ url_for('delete_city', city_id=c['id']) }}"
+                onsubmit="return confirm('Delete {{ c['name'] }}, {{ c['state'] }}?')">
+            <button type="submit" class="danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td class="dim">No cities yet — add one above.</td></tr>
+      {% endfor %}
+    </table>
+    <p class="dim small">Pulls rotate through enabled cities, least-recently-pulled first.</p>
+  </section>
+
+  <section class="card wide">
+    <h2>Industries &amp; franchise exclusions</h2>
+    <form method="post" action="{{ url_for('add_industry') }}" class="inline-form">
+      <input type="text" name="label" placeholder="New industry (e.g. Landscaping)" required>
+      <input type="text" name="query" placeholder="search phrase, e.g. landscaping service in {city}" size="34">
+      <button type="submit" class="primary">Add industry</button>
+    </form>
+    <p class="dim small">Leave the search phrase blank to default to "&lt;industry&gt; in {city}". Any phrase must contain <code>{city}</code>.</p>
+    <div class="industry-list">
+      {% for ind in industries %}
+      <div class="industry {{ 'disabled-row' if not ind['enabled'] }}">
+        <div class="industry-head">
+          <strong>{{ ind['label'] }}</strong>
+          <form method="post" action="{{ url_for('edit_industry_query', industry_id=ind['id']) }}" class="query-edit">
+            <input type="text" name="query" value="{{ ind['query_template'] }}"
+                   title="Google Maps search phrase; must contain {city}">
+            <button type="submit" title="Save search phrase">Save</button>
+          </form>
+          <span class="actions">
+            <form method="post" action="{{ url_for('toggle_industry', industry_id=ind['id']) }}">
+              <button type="submit">{{ 'Disable' if ind['enabled'] else 'Enable' }}</button>
+            </form>
+            <form method="post" action="{{ url_for('delete_industry', industry_id=ind['id']) }}"
+                  onsubmit="return confirm('Delete {{ ind['label'] }} and its chain list?')">
+              <button type="submit" class="danger">Delete</button>
+            </form>
+          </span>
+        </div>
+        <div class="chips">
+          {% for chain in chains.get(ind['id'], []) %}
+          <form method="post" action="{{ url_for('delete_chain', chain_id=chain['id']) }}" class="chip">
+            {{ chain['name'] }} <button type="submit" title="Remove">&times;</button>
+          </form>
+          {% endfor %}
+          <form method="post" action="{{ url_for('add_chain', industry_id=ind['id']) }}" class="chip-add">
+            <input type="text" name="name" placeholder="add chain to exclude…">
+            <button type="submit">+</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+</div>
+
+{% endblock %}

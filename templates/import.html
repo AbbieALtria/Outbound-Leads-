@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Import call log — SEO Leads{% endblock %}
+{% block content %}
+
+<div class="settings-grid">
+  <section class="card">
+    <h2>Import dialer call log</h2>
+    <p class="dim">Upload the raw CSV your dialer produces (e.g. <code>Raw data June 29, 2026.csv</code>).
+    Leads are matched by phone number and their outcomes update automatically —
+    no manual clicking.</p>
+
+    <form method="post" enctype="multipart/form-data" class="inline-form">
+      <input type="file" name="file" accept=".csv,text/csv" required>
+      <button type="submit" class="primary">Import</button>
+    </form>
+
+    {% if error %}
+      <p class="pull-result err">{{ error }}</p>
+    {% endif %}
+
+    {% if summary %}
+      <div class="import-summary">
+        <h2>Imported {{ summary['filename'] }}</h2>
+        <ul>
+          <li><strong>{{ summary['parsed'] }}</strong> phone numbers with a usable outcome</li>
+          <li><strong>{{ summary['updated'] }}</strong> leads updated</li>
+          <li><strong>{{ summary['kept'] }}</strong> matched leads left unchanged (manual status kept, or already set)</li>
+          <li><strong>{{ summary['dnc_blocked'] }}</strong> unknown DO&nbsp;NOT&nbsp;CALL numbers blocked from all future pulls</li>
+          <li><strong>{{ summary['unmatched'] }}</strong> numbers not in your lead list (other campaigns) — ignored</li>
+          <li class="dim">{{ summary['skipped_rows'] }} rows skipped (inbound/after-hours/dropped calls or unreadable phone numbers)</li>
+        </ul>
+        <p><a class="button" href="{{ url_for('history') }}">Review in History</a></p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>How outcomes map</h2>
+    <table class="mini">
+      <tr><td><code>VOICEMAIL</code>, <code>NO ANSWER</code>, <code>ANSWERED</code>, <code>BUSY</code>, <code>Wrong Department/Number</code></td><td>called</td></tr>
+      <tr><td><code>NOT INTERESTED</code></td><td>not interested</td></tr>
+      <tr><td><code>INTERESTED</code>, <code>SALE</code></td><td>interested</td></tr>
+      <tr><td><code>CALL BACK</code></td><td>callback</td></tr>
+      <tr><td><code>DO NOT CALL</code></td><td>dnc — excluded from every future pull and export</td></tr>
+      <tr><td><code>AFTRS</code>, <code>DROPPED</code>, inbound rows</td><td>ignored</td></tr>
+    </table>
+    <p class="dim small">The file just needs a column with "phone" in its header and a
+    <code>status_name</code> column (or the outcome in the last column). If a number appears
+    several times, the last outcome wins — except DO&nbsp;NOT&nbsp;CALL, which always wins.
+    Statuses you set by hand (interested, callback, not interested) are never downgraded
+    by an import; only DO&nbsp;NOT&nbsp;CALL overrides them.</p>
+  </section>
+</div>
+
+{% endblock %}

@@ -1,0 +1,81 @@
+{# Shared leads table. Expects: leads, statuses. Optional: show_date, show_industry #}
+{% if leads %}
+<div class="table-wrap">
+<table class="leads">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Business</th>
+      <th>Phone</th>
+      <th>City</th>
+      {% if show_industry %}<th>Industry</th>{% endif %}
+      <th>Website</th>
+      <th>Score</th>
+      <th>Call hook</th>
+      {% if show_date %}<th>Pulled</th>{% endif %}
+      <th>Outcome</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for lead in leads %}
+    <tr data-lead-id="{{ lead['id'] }}" class="status-{{ lead['status'] }}">
+      <td class="dim">{{ loop.index }}</td>
+      <td>
+        <strong>{{ lead['business_name'] }}</strong>
+        {% if lead['address'] %}<div class="dim small">{{ lead['address'] }}</div>{% endif %}
+        {% if lead['contact'] or lead['email'] %}
+        <div class="small contact-line">
+          {% if lead['contact'] %}&#128100; {{ lead['contact'] }}{% endif %}
+          {% if lead['email'] %}&#9993; {{ lead['email'] }}{% endif %}
+        </div>
+        {% endif %}
+      </td>
+      <td class="nowrap">
+        <a href="tel:{{ lead['phone'] }}">{{ lead['phone'] }}</a>
+        {% if lead['validated_at'] %}
+          {% if lead['phone_valid'] %}
+            <span class="phone-tag ok" title="Verified {{ lead['validated_at'][:10] }}">{{ lead['phone_type'] }}</span>
+          {% else %}
+            <span class="phone-tag bad" title="Verified {{ lead['validated_at'][:10] }} — excluded from dial export">invalid</span>
+          {% endif %}
+        {% endif %}
+      </td>
+      <td class="nowrap">{{ lead['city'] }}{% if lead['state'] %}, {{ lead['state'] }}{% endif %}</td>
+      {% if show_industry %}<td class="nowrap small">{{ lead['industry'].replace('_', ' ') or '—' }}</td>{% endif %}
+      <td>
+        {% if lead['website'] %}
+          <a href="{{ lead['website'] if lead['website'].startswith('http') else 'https://' + lead['website'] }}"
+             target="_blank" rel="noopener">site</a>
+        {% else %}
+          <span class="badge badge-hot">none</span>
+        {% endif %}
+      </td>
+      <td><span class="score">{{ lead['score'] }}</span></td>
+      <td class="hook small">{{ lead['call_hook'] }}</td>
+      {% if show_date %}<td class="nowrap dim small">{{ lead['pulled_date'] }}</td>{% endif %}
+      <td class="nowrap">
+        <div class="status-buttons">
+          <button class="sbtn sbtn-called {{ 'on' if lead['status'] == 'called' }}"
+                  data-status="called" title="Called">Called</button>
+          <button class="sbtn sbtn-interested {{ 'on' if lead['status'] == 'interested' }}"
+                  data-status="interested" title="Interested">Int.</button>
+          {% if show_appointment %}
+          <button class="sbtn sbtn-appointment {{ 'on' if lead['status'] == 'appointment' }}"
+                  data-status="appointment" title="Appointment set">Appt</button>
+          {% endif %}
+          <button class="sbtn sbtn-not_interested {{ 'on' if lead['status'] == 'not_interested' }}"
+                  data-status="not_interested" title="Not interested">No</button>
+          <button class="sbtn sbtn-callback {{ 'on' if lead['status'] == 'callback' }}"
+                  data-status="callback" title="Callback">Callb.</button>
+        </div>
+      </td>
+      <td><input class="notes" type="text" value="{{ lead['notes'] }}" placeholder="notes…"></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No leads match. Pull new leads or adjust the filters.</p>
+{% endif %}

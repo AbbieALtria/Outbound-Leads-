@@ -1,0 +1,4 @@
+# One city per line, format: City, ST
+# Add more cities here any time -- the script rotates through them
+# in order and remembers where it left off (see rotation_state.json).
+Tampa, FL

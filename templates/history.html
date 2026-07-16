@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}History — SEO Leads{% endblock %}
+{% block content %}
+
+<section class="filters">
+  <form method="get" class="inline-form">
+    <label>Date <input type="date" name="date" value="{{ f.get('date', '') }}"></label>
+    <label>Status
+      <select name="status">
+        <option value="">all</option>
+        {% for s in statuses %}
+        <option value="{{ s }}" {{ 'selected' if s == f.get('status') }}>{{ s.replace('_', ' ') }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>City
+      <select name="city">
+        <option value="">all</option>
+        {% for c in cities %}
+        <option value="{{ c }}" {{ 'selected' if c == f.get('city') }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Industry
+      <select name="industry">
+        <option value="">all</option>
+        {% for ind in industries %}
+        <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == f.get('industry') }}>{{ ind['label'] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Search <input type="text" name="q" value="{{ f.get('q', '') }}" placeholder="name or phone"></label>
+    <button type="submit">Filter</button>
+    <a class="button" href="{{ url_for('history') }}">Clear</a>
+    <a class="button" href="{{ url_for('history', status='callback') }}">Callbacks due</a>
+    <a class="button" href="{{ url_for('export_vicidial', **f) }}">VICIdial CSV</a>
+    <a class="button" href="{{ url_for('export_csv', **f) }}">Export CSV</a>
+  </form>
+</section>
+
+<p class="dim">{{ leads | length }} lead(s)</p>
+
+{% with show_date = true, show_industry = true %}
+  {% include "_lead_table.html" %}
+{% endwith %}
+
+{% endblock %}
