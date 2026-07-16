@@ -14,8 +14,8 @@ import re
 import threading
 from datetime import date
 
-from flask import (Flask, Response, g, jsonify, redirect, render_template,
-                   request, url_for)
+from flask import (Flask, g, jsonify, redirect, render_template,
+                   request, session, url_for)
 
 import db
 import dialer_import
@@ -23,35 +23,146 @@ import dnc
 import leads_intake
 import pipeline
 import scoring
+import users
 
 app = Flask(__name__)
+# Signs the login session cookie. Stable across restarts when set in the env so
+# users aren't logged out on every redeploy.
+app.secret_key = (os.environ.get("SECRET_KEY")
+                  or os.environ.get("ADMIN_PASSWORD")
+                  or os.environ.get("APP_PASSWORD")
+                  or "local-dev-secret-key")
 
 # Initialize the database at import time so it works under gunicorn (which never
 # runs the __main__ block below), not only when started via `python app.py`.
 db.init_db()
+_seed_conn = db.connect()
+users.ensure_admin(_seed_conn)
+_seed_conn.close()
 
 _pull_lock = threading.Lock()
 
+# Paths reachable without a login.
+_PUBLIC_ENDPOINTS = {"login", "logout", "static", "api_intake"}
+
 
 @app.before_request
-def require_password():
-    """Password-gate the whole app when APP_PASSWORD is set (i.e. on a hosted
-    deploy). Left open when unset so local use needs no login. Basic auth over
-    Railway's HTTPS; the username is ignored, only the password must match."""
-    # The vendor lead-intake webhook authenticates with its own API key
-    # (it can't do a browser login), so it's exempt from the password gate.
-    if request.path == "/api/intake":
+def require_login():
+    """Require a logged-in user for the whole app once auth is enabled (a
+    bootstrap password is set or users exist). The vendor intake webhook uses
+    its own API key, and the login page must be reachable, so both are exempt.
+    Locally, with no auth configured, the app stays open."""
+    if request.endpoint in _PUBLIC_ENDPOINTS:
         return None
-    password = os.environ.get("APP_PASSWORD", "")
-    if not password:
+    conn = get_db()
+    if not users.auth_enabled(conn):
         return None
-    auth = request.authorization
-    if auth and auth.password == password:
+    user_id = session.get("user_id")
+    if user_id:
+        row = users.get(conn, user_id)
+        if row and row["enabled"]:
+            g.user = row
+            return None
+        session.clear()
+    return redirect(url_for("login", next=request.path))
+
+
+@app.context_processor
+def inject_user():
+    return {"current_user": getattr(g, "user", None)}
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    conn = get_db()
+    error = None
+    if request.method == "POST":
+        user = users.authenticate(conn, request.form.get("username", ""),
+                                  request.form.get("password", ""))
+        if user:
+            session.clear()
+            session["user_id"] = user["id"]
+            dest = request.args.get("next") or url_for("dashboard")
+            return redirect(dest if dest.startswith("/") else url_for("dashboard"))
+        error = "Wrong username or password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+def _require_admin():
+    """Return None if the current user is an admin, else a redirect response."""
+    user = getattr(g, "user", None)
+    if user and user["role"] == "admin":
         return None
-    return Response(
-        "Authentication required.", 401,
-        {"WWW-Authenticate": 'Basic realm="Lead Gen Platform"'},
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/users")
+def users_page():
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    return render_template("users.html", users=users.list_users(conn),
+                           roles=users.ROLES, error=request.args.get("error"))
+
+
+@app.route("/users/create", methods=["POST"])
+def users_create():
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    ok, err = users.create_user(
+        conn, request.form.get("username", ""), request.form.get("password", ""),
+        request.form.get("role", "agent"), created_by=g.user["username"],
     )
+    return redirect(url_for("users_page", error=None if ok else err))
+
+
+@app.route("/users/<int:user_id>/password", methods=["POST"])
+def users_password(user_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    if not users.set_password(conn, user_id, request.form.get("password", "")):
+        return redirect(url_for("users_page", error="Password must be at least 6 characters."))
+    return redirect(url_for("users_page"))
+
+
+@app.route("/users/<int:user_id>/toggle", methods=["POST"])
+def users_toggle(user_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    target = users.get(conn, user_id)
+    # Never disable the last active admin (would lock everyone out of user mgmt).
+    if target and target["role"] == "admin" and target["enabled"] and users.admin_count(conn) <= 1:
+        return redirect(url_for("users_page", error="Can't disable the only admin."))
+    users.toggle_enabled(conn, user_id)
+    return redirect(url_for("users_page"))
+
+
+@app.route("/users/<int:user_id>/delete", methods=["POST"])
+def users_delete(user_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    target = users.get(conn, user_id)
+    if target and target["role"] == "admin" and users.admin_count(conn) <= 1:
+        return redirect(url_for("users_page", error="Can't delete the only admin."))
+    if target and target["id"] == g.user["id"]:
+        return redirect(url_for("users_page", error="You can't delete your own account."))
+    users.delete_user(conn, user_id)
+    return redirect(url_for("users_page"))
 
 
 def get_db():

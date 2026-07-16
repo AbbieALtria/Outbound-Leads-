@@ -15,6 +15,15 @@
     <a href="{{ url_for('import_call_log') }}" class="{{ 'active' if request.endpoint == 'import_call_log' }}">Call Log</a>
     <a href="{{ url_for('dnc_page') }}" class="{{ 'active' if request.endpoint == 'dnc_page' }}">DNC</a>
     <a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
+    {% if current_user and current_user['role'] == 'admin' %}
+    <a href="{{ url_for('users_page') }}" class="{{ 'active' if request.endpoint == 'users_page' }}">Users</a>
+    {% endif %}
+    {% if current_user %}
+    <span class="nav-user">{{ current_user['username'] }}
+      <span class="dim small">({{ current_user['role'] }})</span>
+      · <a href="{{ url_for('logout') }}">Logout</a>
+    </span>
+    {% endif %}
   </nav>
   <main>
     {% block content %}{% endblock %}

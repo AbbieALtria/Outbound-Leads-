@@ -302,6 +302,16 @@ CREATE TABLE IF NOT EXISTS pull_runs (
     message TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'agent',      -- admin | agent
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS dnc_numbers (
     phone TEXT PRIMARY KEY,                  -- 10-digit, normalized
     source TEXT NOT NULL DEFAULT '',         -- upload | call_log | manual | federal | litigator

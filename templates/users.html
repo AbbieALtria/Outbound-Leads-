@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Users — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<div class="settings-grid">
+  <section class="card wide">
+    <h2>Users</h2>
+    <p class="dim small">Admins can create and manage accounts. Agents can use the app but not manage users.</p>
+    {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
+    <table class="mini">
+      <tr><th>Username</th><th>Role</th><th>Status</th><th>Added</th><th></th></tr>
+      {% for u in users %}
+      <tr class="{{ 'disabled-row' if not u['enabled'] }}">
+        <td><strong>{{ u['username'] }}</strong>{{ ' (you)' if current_user and u['id'] == current_user['id'] else '' }}</td>
+        <td>{{ u['role'] }}</td>
+        <td>{{ 'active' if u['enabled'] else 'disabled' }}</td>
+        <td class="dim small">{{ u['created_at'][:10] }} · by {{ u['created_by'] }}</td>
+        <td class="nowrap actions">
+          <form method="post" action="{{ url_for('users_password', user_id=u['id']) }}"
+                onsubmit="return this.password.value.length>=6 || (alert('Password must be 6+ characters'),false)">
+            <input type="password" name="password" placeholder="new password" size="12">
+            <button type="submit">Reset</button>
+          </form>
+          <form method="post" action="{{ url_for('users_toggle', user_id=u['id']) }}">
+            <button type="submit">{{ 'Disable' if u['enabled'] else 'Enable' }}</button>
+          </form>
+          <form method="post" action="{{ url_for('users_delete', user_id=u['id']) }}"
+                onsubmit="return confirm('Delete {{ u['username'] }}?')">
+            <button type="submit" class="danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <h2 style="margin-top:18px;">Add a user</h2>
+    <form method="post" action="{{ url_for('users_create') }}" class="inline-form">
+      <input type="text" name="username" placeholder="username" required>
+      <input type="password" name="password" placeholder="password (6+ chars)" required>
+      <label class="dim small">role
+        <select name="role">
+          {% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="primary">Create user</button>
+    </form>
+  </section>
+</div>
+
+{% endblock %}
