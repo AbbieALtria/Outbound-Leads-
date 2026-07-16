@@ -230,6 +230,9 @@ LEAD_EXTRA_COLUMNS = {
     "consent_at": "TEXT",                                # when/how consent was given
     "product_interest": "TEXT NOT NULL DEFAULT ''",     # B2C: what they asked about
     "preferred_contact_time": "TEXT NOT NULL DEFAULT ''",
+    # Extra fields their VICIdial upload uses (the red-tagged columns).
+    "street_address": "TEXT NOT NULL DEFAULT ''",       # street line only (Outscraper 'street')
+    "maps_url": "TEXT NOT NULL DEFAULT ''",             # Google Maps place link
 }
 
 # Extra columns on pull_runs added after first release.

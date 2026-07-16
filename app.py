@@ -245,36 +245,43 @@ def vici_phone(phone):
     return phone
 
 
+def _street_of(lead):
+    """Street-only line: the stored street, else the part of the full address
+    before the first comma (legacy leads that predate the street column)."""
+    if lead["street_address"]:
+        return lead["street_address"]
+    addr = lead["address"] or ""
+    return addr.split(",")[0].strip() if addr else ""
+
+
 @app.route("/export/vicidial.csv")
 def export_vicidial():
-    """Dial-ready export in the VICIdial loader format:
-    Phone,Address3,Comments,Address1,City,State,PostCode,Website,Email,Show,<dnc-check>
-    Internal DNC numbers are never included."""
+    """Dial-ready export matching the client's VICIdial upload (the red-tagged
+    columns of their raw file):
+    Name, Full_Address, Street_Address, City, State, Zip, Website, Phone, Email, Category, URL
+    DNC and invalid-phone leads are never included."""
     conn = get_db()
     leads = [l for l in fetch_leads(conn, request.args)
              if l["status"] != "dnc" and l["phone_valid"]]
 
-    fields = ["Phone", "Address3", "Comments", "Address1", "City", "State",
-              "PostCode", "Website", "Email", "Show", ""]
+    fields = ["Name", "Full_Address", "Street_Address", "City", "State", "Zip",
+              "Website", "Phone", "Email", "Category", "URL"]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields)
     writer.writeheader()
     for lead in leads:
-        comments = lead["business_name"]
-        if lead["contact"]:
-            comments += f" -- ask for {lead['contact']}"
         writer.writerow({
-            "Phone": vici_phone(lead["phone"]),
-            "Address3": lead["search_query"],
-            "Comments": comments,
-            "Address1": lead["address"],
+            "Name": lead["business_name"],
+            "Full_Address": lead["address"],
+            "Street_Address": _street_of(lead),
             "City": lead["city"],
             "State": abbrev_state(lead["state"]),
-            "PostCode": lead["postcode"],
+            "Zip": lead["postcode"],
             "Website": lead["website"],
+            "Phone": vici_phone(lead["phone"]),
             "Email": lead["email"],
-            "Show": lead["category"],
-            "": "No - Not on DNC",
+            "Category": lead["category"],
+            "URL": lead["maps_url"],
         })
     name = f"vicidial_{request.args.get('date') or 'all'}.csv"
     return app.response_class(
