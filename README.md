@@ -3,6 +3,38 @@
 Local dashboard for pulling, ranking, and working HVAC/home-services SEO leads
 from the Outscraper (Google Maps) API.
 
+## Deploy to Railway (hosted, accessible anywhere)
+
+The app is deploy-ready: `Procfile` runs gunicorn, it binds `$PORT`, the DB path
+is configurable, and an optional password gate protects it.
+
+1. **Push to GitHub** (private repo — it's a business tool):
+   ```
+   git remote add origin https://github.com/<you>/<repo>.git
+   git push -u origin main
+   ```
+2. **Create the Railway project:** New Project → Deploy from GitHub repo → pick
+   this repo. Railway auto-detects Python + the Procfile and runs gunicorn.
+3. **Add a persistent Volume** (⚠️ required — without it your database is wiped on
+   every redeploy): in the service, add a Volume mounted at **`/data`**.
+4. **Set environment variables** (service → Variables):
+   - `DATA_DIR=/data` — puts `leads.db` on the persistent volume
+   - `OUTSCRAPER_API_KEY=<your key>`
+   - `APP_PASSWORD=<a strong password>` — **without this the site is wide open** to
+     anyone with the URL, including the credit-spending "Pull New Leads" button
+   - (later) `APIFY_TOKEN=<token>` for the Apify bulk-pull path
+5. Open the Railway URL. The browser will ask for a login — use **any username**
+   and the `APP_PASSWORD` you set.
+
+**Data continuity:** the hosted app starts with an *empty* database — your local
+`leads.db` (leads, DNC list, dedupe history) is intentionally not committed. To
+carry it over, copy your local `leads.db` into the Railway `/data` volume (via the
+Railway CLI). Otherwise the hosted instance builds its own history from scratch.
+
+**Local vs hosted:** running locally still needs no login (no `APP_PASSWORD` set)
+and stores `leads.db` next to the code. The two instances have separate databases
+unless you deliberately sync them.
+
 ## Run it (easy way)
 
 **Double-click `Start SEO Leads.bat`.** It starts the app and opens your web
