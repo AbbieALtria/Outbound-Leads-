@@ -11,50 +11,68 @@ async function postJSON(url, body) {
   return data;
 }
 
-// ---- geo: cascade the State/Province dropdown from the chosen Country ----
-(function initGeo() {
-  const country = document.getElementById("pull-country");
-  const state = document.getElementById("pull-state");
-  if (!country || !state) return;
-  let statesByCountry = {};
-  try { statesByCountry = JSON.parse(country.dataset.states || "{}"); } catch {}
-  const lastState = country.dataset.lastState || "";
-  const fill = () => {
-    const list = statesByCountry[country.value] || [];
-    state.innerHTML = "";
-    const blank = document.createElement("option");
-    blank.value = "";
-    blank.textContent = list.length ? "State/Province" : "(use City)";
-    state.appendChild(blank);
-    list.forEach((s) => {
-      const o = document.createElement("option");
-      o.value = s;
-      o.textContent = s;
-      if (s === lastState) o.selected = true;
-      state.appendChild(o);
-    });
-    state.disabled = list.length === 0;
-  };
-  fill();
-  country.addEventListener("change", fill);
-})();
-
-// ---- city: "+ new city" reveals a text box; otherwise pick from the dropdown ----
+// ---- geo cascade: Country -> State -> City (seeded + previously-pulled) ----
 function currentCity() {
   const sel = document.getElementById("pull-city");
   const box = document.getElementById("pull-city-new");
   if (sel && sel.value === "__new__") return box && box.value ? box.value.trim() : "";
   return sel ? sel.value : "";
 }
-(function initCity() {
-  const sel = document.getElementById("pull-city");
-  const box = document.getElementById("pull-city-new");
-  if (!sel || !box) return;
-  sel.addEventListener("change", () => {
-    const isNew = sel.value === "__new__";
-    box.hidden = !isNew;
-    if (isNew) box.focus();
+(function initGeo() {
+  const country = document.getElementById("pull-country");
+  const state = document.getElementById("pull-state");
+  const city = document.getElementById("pull-city");
+  const cityBox = document.getElementById("pull-city-new");
+  if (!country || !state || !city) return;
+  const parse = (el, attr) => { try { return JSON.parse(el.dataset[attr] || "{}"); } catch { return {}; } };
+  const statesByCountry = parse(country, "states");
+  const citiesByState = parse(city, "cities");
+  const knownByState = parse(city, "known");
+  const lastState = country.dataset.lastState || "";
+  const lastCity = city.dataset.lastCity || "";
+
+  const opt = (value, label, selected) => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = label;
+    if (selected) o.selected = true;
+    return o;
+  };
+
+  const fillCities = () => {
+    const seeded = citiesByState[state.value] || [];
+    const known = knownByState[state.value] || [];
+    const merged = [...new Set([...seeded, ...known])].sort((a, b) => a.localeCompare(b));
+    city.innerHTML = "";
+    city.appendChild(opt("", "City…"));
+    let matched = false;
+    merged.forEach((c) => {
+      const sel = c === lastCity;
+      if (sel) matched = true;
+      city.appendChild(opt(c, c, sel));
+    });
+    // last-used city that isn't in the list (e.g. a typed one)
+    if (lastCity && !matched) city.appendChild(opt(lastCity, lastCity, true));
+    city.appendChild(opt("__new__", "＋ new city…"));
+    cityBox.hidden = true;
+  };
+
+  const fillStates = () => {
+    const list = statesByCountry[country.value] || [];
+    state.innerHTML = "";
+    state.appendChild(opt("", list.length ? "State/Province" : "(use City)"));
+    list.forEach((s) => state.appendChild(opt(s, s, s === lastState)));
+    state.disabled = list.length === 0;
+    fillCities();
+  };
+
+  country.addEventListener("change", fillStates);
+  state.addEventListener("change", fillCities);
+  city.addEventListener("change", () => {
+    const isNew = city.value === "__new__";
+    cityBox.hidden = !isNew;
+    if (isNew) cityBox.focus();
   });
+  fillStates();
 })();
 
 // ---- status buttons ----

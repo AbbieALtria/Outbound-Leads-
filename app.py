@@ -20,6 +20,7 @@ from flask import (Flask, g, jsonify, redirect, render_template,
 import db
 import dialer_import
 import dnc
+import geo_data
 import leads_intake
 import pipeline
 import scoring
@@ -221,6 +222,17 @@ def fetch_leads(conn, args):
     ).fetchall()
 
 
+def _known_cities_by_state(conn):
+    """Cities already pulled, grouped by state, to merge into the seeded city
+    dropdown so previously-used cities also show up."""
+    out = {}
+    for r in conn.execute(
+        "SELECT DISTINCT state, city FROM leads WHERE city != '' AND state != ''"
+    ):
+        out.setdefault(r["state"], []).append(r["city"])
+    return out
+
+
 # ---------------------------------------------------------------- pages
 
 @app.route("/")
@@ -270,8 +282,8 @@ def dashboard():
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         default_target=db.get_setting(conn, "target_leads_per_day", "100"),
         countries=COUNTRIES, states_by_country=STATES_BY_COUNTRY,
-        known_cities=[r["city"] for r in conn.execute(
-            "SELECT DISTINCT city FROM leads WHERE city != '' ORDER BY city")],
+        cities_by_state=geo_data.CITIES_BY_STATE,
+        known_by_state=_known_cities_by_state(conn),
         last_city=db.get_setting(conn, "last_city", ""),
         last_state=db.get_setting(conn, "last_state", ""),
         last_country=db.get_setting(conn, "last_country", "United States"),
