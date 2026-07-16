@@ -72,6 +72,16 @@ CAMPAIGN_PRESETS = {
             "low_reviews": {"points": 10, "hook": ""},
         },
     },
+    # --- B2C presets (framework). B2C leads come from a consumer-data source,
+    # not Google Maps, so scoring rules stay empty until that source is wired in;
+    # the campaign definitions exist now so the platform is B2C-ready. ---
+    "solar": {"name": "Solar Installation", "audience": "b2c", "goal": "appointment", "rules": {}},
+    "insurance_b2c": {"name": "Insurance", "audience": "b2c", "goal": "appointment", "rules": {}},
+    "home_improvement": {"name": "Home Improvement", "audience": "b2c", "goal": "appointment", "rules": {}},
+    "real_estate_b2c": {"name": "Real Estate Buyers/Sellers", "audience": "b2c", "goal": "appointment", "rules": {}},
+    "mortgage": {"name": "Mortgage / Loan Inquiries", "audience": "b2c", "goal": "appointment", "rules": {}},
+    "healthcare_appt": {"name": "Healthcare Appointments", "audience": "b2c", "goal": "appointment", "rules": {}},
+    "auto_services_b2c": {"name": "Automotive Services", "audience": "b2c", "goal": "appointment", "rules": {}},
 }
 DEFAULT_ACTIVE_CAMPAIGN = "seo"
 
@@ -289,14 +299,19 @@ CREATE TABLE IF NOT EXISTS campaigns (
     goal TEXT NOT NULL DEFAULT 'close',      -- close | appointment
     rules TEXT NOT NULL DEFAULT '{}',        -- JSON: {signal: {points, hook}}
     is_preset INTEGER NOT NULL DEFAULT 0,
-    site_check INTEGER NOT NULL DEFAULT 0    -- run live website-quality probe during pull?
+    site_check INTEGER NOT NULL DEFAULT 0,   -- run live website-quality probe during pull?
+    enabled INTEGER NOT NULL DEFAULT 1       -- show as an activatable campaign?
 );
 """
 
 # Extra columns on campaigns added after the table's first release.
 CAMPAIGN_EXTRA_COLUMNS = {
     "site_check": "INTEGER NOT NULL DEFAULT 0",
+    "enabled": "INTEGER NOT NULL DEFAULT 1",
 }
+
+# Market types a campaign can target.
+MARKET_TYPES = ["b2b", "b2c", "hybrid"]
 
 
 def connect(db_path=DB_FILE):

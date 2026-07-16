@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Settings — SEO Leads{% endblock %}
+{% block title %}Settings — Lead Gen Platform{% endblock %}
 {% block content %}
 
 <div class="settings-grid">
@@ -42,26 +42,46 @@
 
   <section class="card wide">
     <h2>Campaigns</h2>
-    <p class="dim small">A campaign decides which signals make a lead "hot" and the call-hook wording —
-    the same lead pool serves any offer. Activating one re-scores every lead. Presets can't be deleted.</p>
+    <p class="dim small">A campaign decides the market type, which signals make a lead "hot", and the
+    call-hook wording — the same lead pool serves any offer. Activating one re-scores every lead.
+    Presets can't be deleted, but any campaign can be edited or disabled.</p>
     <table class="mini">
-      <tr><th></th><th>Campaign</th><th>Audience</th><th>Goal</th><th></th></tr>
+      <tr><th></th><th>Campaign</th><th>Market</th><th>Goal</th><th></th></tr>
       {% for c in campaigns %}
-      <tr class="{{ 'active-campaign' if c['slug'] == active_campaign }}">
+      <tr class="{{ 'active-campaign' if c['slug'] == active_campaign }} {{ 'disabled-row' if not c['enabled'] }}">
         <td>
           <form method="post" action="{{ url_for('activate_campaign') }}">
             <input type="hidden" name="slug" value="{{ c['slug'] }}">
             {% if c['slug'] == active_campaign %}
               <span class="badge badge-ok">active</span>
-            {% else %}
+            {% elif c['enabled'] %}
               <button type="submit">Activate</button>
+            {% else %}
+              <span class="dim small">off</span>
             {% endif %}
           </form>
         </td>
-        <td><strong>{{ c['name'] }}</strong>{{ ' (preset)' if c['is_preset'] else '' }}</td>
-        <td>{{ c['audience']|upper }}</td>
-        <td>{{ 'Appointment setting' if c['goal'] == 'appointment' else 'Close on call' }}</td>
-        <td class="nowrap">
+        <td>
+          <form method="post" action="{{ url_for('edit_campaign', campaign_id=c['id']) }}" class="inline-form campaign-edit">
+            <input type="text" name="name" value="{{ c['name'] }}" size="26">
+            <select name="audience">
+              {% for m in market_types %}
+              <option value="{{ m }}" {{ 'selected' if c['audience'] == m }}>{{ m|upper }}</option>
+              {% endfor %}
+            </select>
+            <select name="goal">
+              <option value="close" {{ 'selected' if c['goal'] == 'close' }}>Close on call</option>
+              <option value="appointment" {{ 'selected' if c['goal'] == 'appointment' }}>Appointment</option>
+            </select>
+            <button type="submit" title="Save changes">Save</button>
+          </form>
+        </td>
+        <td>{{ c['audience']|upper }}{{ ' · preset' if c['is_preset'] else '' }}</td>
+        <td>{{ 'Appt setting' if c['goal'] == 'appointment' else 'Close' }}</td>
+        <td class="nowrap actions">
+          <form method="post" action="{{ url_for('toggle_campaign', campaign_id=c['id']) }}">
+            <button type="submit">{{ 'Disable' if c['enabled'] else 'Enable' }}</button>
+          </form>
           {% if not c['is_preset'] %}
           <form method="post" action="{{ url_for('delete_campaign', campaign_id=c['id']) }}"
                 onsubmit="return confirm('Delete campaign {{ c['name'] }}?')">
@@ -79,15 +99,18 @@
           {% for c in campaigns %}<option value="{{ c['slug'] }}">{{ c['name'] }}</option>{% endfor %}
         </select>
       </label>
-      <label class="dim small">audience
-        <select name="audience"><option value="b2b">B2B</option><option value="b2c">B2C</option></select>
+      <label class="dim small">market
+        <select name="audience">
+          {% for m in market_types %}<option value="{{ m }}">{{ m|upper }}</option>{% endfor %}
+        </select>
       </label>
       <label class="dim small">goal
         <select name="goal"><option value="close">Close on call</option><option value="appointment">Appointment setting</option></select>
       </label>
       <button type="submit" class="primary">Add campaign</button>
     </form>
-    <p class="dim small">New campaigns copy the scoring rules of the "based on" preset — a starting point you can refine later.</p>
+    <p class="dim small">New campaigns copy the scoring rules of the "based on" campaign — a starting point you can refine later.
+    B2C campaigns are ready as definitions; sourcing B2C consumer leads needs a consumer-data source (coming next).</p>
   </section>
 
   <section class="card">

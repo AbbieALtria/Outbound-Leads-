@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — SEO Leads{% endblock %}
+{% block title %}Dashboard — Lead Gen Platform{% endblock %}
 {% block content %}
 
 <section class="toolbar">
@@ -26,8 +26,10 @@
     <button id="stop-btn" class="danger" hidden>Stop</button>
     <button id="clear-btn" class="button" type="button" title="Clear progress and reset the view">Clear</button>
 
-    <form method="post" action="{{ url_for('add_industry') }}" class="add-industry-form" title="Add a new industry">
-      <input type="text" name="label" placeholder="＋ add industry" required>
+    {% set is_b2c = active_campaign and active_campaign['audience'] == 'b2c' %}
+    <form method="post" action="{{ url_for('add_industry') }}" class="add-industry-form"
+          title="Add a new {{ 'consumer category' if is_b2c else 'industry' }}">
+      <input type="text" name="label" placeholder="{{ '＋ add category' if is_b2c else '＋ add industry' }}" required>
       <input type="hidden" name="next" value="dashboard">
       <button type="submit">Add</button>
     </form>

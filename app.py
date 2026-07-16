@@ -44,7 +44,7 @@ def require_password():
         return None
     return Response(
         "Authentication required.", 401,
-        {"WWW-Authenticate": 'Basic realm="SEO Leads"'},
+        {"WWW-Authenticate": 'Basic realm="Lead Gen Platform"'},
     )
 
 
@@ -128,9 +128,13 @@ def dashboard():
     for lead in leads:
         counts[lead["status"]] = counts.get(lead["status"], 0) + 1
     total_leads = conn.execute("SELECT COUNT(*) AS n FROM leads").fetchone()["n"]
-    campaigns = conn.execute("SELECT * FROM campaigns ORDER BY is_preset DESC, name").fetchall()
+    campaigns = conn.execute(
+        "SELECT * FROM campaigns WHERE enabled = 1 ORDER BY audience, is_preset DESC, name"
+    ).fetchall()
     active_slug = db.get_setting(conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN)
-    active_campaign = next((c for c in campaigns if c["slug"] == active_slug), None)
+    active_campaign = conn.execute(
+        "SELECT * FROM campaigns WHERE slug = ?", (active_slug,)
+    ).fetchone()
     return render_template(
         "dashboard.html", leads=leads, batch=batch, run_id=run_id,
         industries=industries, statuses=db.LEAD_STATUSES, counts=counts,
@@ -168,7 +172,7 @@ def settings():
     campaigns = conn.execute("SELECT * FROM campaigns ORDER BY is_preset DESC, name").fetchall()
     return render_template(
         "settings.html", cities=cities, industries=industries, chains=chains,
-        campaigns=campaigns,
+        campaigns=campaigns, market_types=db.MARKET_TYPES,
         active_campaign=db.get_setting(conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN),
         target=db.get_setting(conn, "target_leads_per_day", "100"),
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
@@ -574,10 +578,36 @@ def add_campaign():
         conn.execute(
             "INSERT OR IGNORE INTO campaigns (slug, name, audience, goal, rules, is_preset, site_check) "
             "VALUES (?, ?, ?, ?, ?, 0, ?)",
-            (slug, name, audience if audience in ("b2b", "b2c") else "b2b",
+            (slug, name, audience if audience in db.MARKET_TYPES else "b2b",
              goal if goal in ("close", "appointment") else "close", rules, site_check),
         )
         conn.commit()
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/campaigns/<int:campaign_id>/edit", methods=["POST"])
+def edit_campaign(campaign_id):
+    """Edit a campaign's name / market type / goal in the UI (no code changes)."""
+    name = request.form.get("name", "").strip()
+    audience = request.form.get("audience", "").strip()
+    goal = request.form.get("goal", "").strip()
+    conn = get_db()
+    if name:
+        conn.execute("UPDATE campaigns SET name = ? WHERE id = ?", (name, campaign_id))
+    if audience in db.MARKET_TYPES:
+        conn.execute("UPDATE campaigns SET audience = ? WHERE id = ?", (audience, campaign_id))
+    if goal in ("close", "appointment"):
+        conn.execute("UPDATE campaigns SET goal = ? WHERE id = ?", (goal, campaign_id))
+    conn.commit()
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/campaigns/<int:campaign_id>/toggle", methods=["POST"])
+def toggle_campaign(campaign_id):
+    """Activate/deactivate a campaign (hides it from the dashboard picker)."""
+    conn = get_db()
+    conn.execute("UPDATE campaigns SET enabled = 1 - enabled WHERE id = ?", (campaign_id,))
+    conn.commit()
     return redirect(url_for("settings"))
 
 

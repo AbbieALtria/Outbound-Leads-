@@ -71,6 +71,9 @@ button.danger:hover { background: #fdeaea; }
   margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .campaign-select select { font-weight: 600; color: var(--accent-dark); }
 tr.active-campaign { background: #e3ecfd; }
+.campaign-edit { gap: 5px !important; }
+.campaign-edit input { font-size: 12px; padding: 3px 6px; }
+.campaign-edit select { font-size: 12px; padding: 3px 4px; }
 .pull-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 #pull-industry { min-width: 170px; }
 .add-industry-form { display: inline-flex; gap: 4px; align-items: center; margin-left: auto; }
