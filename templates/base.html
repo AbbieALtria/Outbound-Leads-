@@ -11,7 +11,8 @@
     <span class="brand">Lead Gen Platform</span>
     <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}">Dashboard</a>
     <a href="{{ url_for('history') }}" class="{{ 'active' if request.endpoint == 'history' }}">History</a>
-    <a href="{{ url_for('import_call_log') }}" class="{{ 'active' if request.endpoint == 'import_call_log' }}">Import</a>
+    <a href="{{ url_for('import_leads') }}" class="{{ 'active' if request.endpoint == 'import_leads' }}">Import Leads</a>
+    <a href="{{ url_for('import_call_log') }}" class="{{ 'active' if request.endpoint == 'import_call_log' }}">Call Log</a>
     <a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
   </nav>
   <main>

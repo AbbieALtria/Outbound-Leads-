@@ -222,6 +222,14 @@ LEAD_EXTRA_COLUMNS = {
     "reviews": "INTEGER",
     "rating": "REAL",
     "unclaimed": "INTEGER",  # 1 = Google listing unclaimed (Outscraper verified=False)
+    # Market + provenance. B2B leads are pulled from Maps; B2C leads arrive via
+    # the intake API / CSV import and MUST carry consent for compliant calling.
+    "market_type": "TEXT NOT NULL DEFAULT 'b2b'",       # b2b | b2c
+    "lead_source": "TEXT NOT NULL DEFAULT ''",          # pull | api:<vendor> | csv:<file>
+    "consent_status": "TEXT NOT NULL DEFAULT ''",       # opted_in | unknown | ...
+    "consent_at": "TEXT",                                # when/how consent was given
+    "product_interest": "TEXT NOT NULL DEFAULT ''",     # B2C: what they asked about
+    "preferred_contact_time": "TEXT NOT NULL DEFAULT ''",
 }
 
 # Extra columns on pull_runs added after first release.

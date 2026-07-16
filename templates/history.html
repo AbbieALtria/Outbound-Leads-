@@ -21,6 +21,13 @@
         {% endfor %}
       </select>
     </label>
+    <label>Market
+      <select name="market_type">
+        <option value="">all</option>
+        <option value="b2b" {{ 'selected' if f.get('market_type') == 'b2b' }}>B2B</option>
+        <option value="b2c" {{ 'selected' if f.get('market_type') == 'b2c' }}>B2C</option>
+      </select>
+    </label>
     <label>Industry
       <select name="industry">
         <option value="">all</option>

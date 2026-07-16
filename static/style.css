@@ -162,6 +162,8 @@ tr.status-dnc strong { text-decoration: line-through; }
 
 .import-summary { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
 .import-summary ul { margin: 8px 0; padding-left: 20px; line-height: 1.7; }
+.code-block { background: #f4f6f9; border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; font-size: 12px; overflow-x: auto; white-space: pre; }
 
 .status-buttons { display: flex; gap: 3px; }
 .sbtn { padding: 3px 7px; font-size: 12px; border-radius: 5px; }

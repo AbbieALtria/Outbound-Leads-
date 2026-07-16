@@ -24,9 +24,23 @@ SIGNALS = {
 }
 
 
+# Signals that only make sense for B2B (business) leads. They must never fire
+# for a B2C consumer lead, even if a B2B campaign happens to be active.
+B2B_ONLY_SIGNALS = {"no_website", "has_website", "unclaimed",
+                    "low_reviews", "few_reviews", "low_rating"}
+
+
+def _mv(lead, key, default=None):
+    """Read a key from a dict or sqlite3.Row, returning default if absent."""
+    try:
+        return lead[key]
+    except (KeyError, IndexError):
+        return default
+
+
 def _fmt(hook, lead):
     try:
-        return hook.format(reviews=lead["reviews"], rating=lead["rating"])
+        return hook.format(reviews=_mv(lead, "reviews"), rating=_mv(lead, "rating"))
     except Exception:
         return hook
 
@@ -35,13 +49,16 @@ def evaluate(lead, rules):
     """rules: {signal: {points, hook}}. Returns (score:int, hook:str)."""
     score = 0
     hooks = []
+    market = _mv(lead, "market_type", "b2b")
     for signal, cfg in rules.items():
+        if signal in B2B_ONLY_SIGNALS and market != "b2b":
+            continue  # don't apply business signals to consumer leads
         check = SIGNALS.get(signal)
         if check is None:
             continue
         try:
             fired = check(lead)
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, IndexError):
             fired = False
         if fired:
             score += int(cfg.get("points", 0))

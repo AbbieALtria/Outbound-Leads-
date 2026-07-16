@@ -19,6 +19,7 @@ from flask import (Flask, Response, g, jsonify, redirect, render_template,
 
 import db
 import dialer_import
+import leads_intake
 import pipeline
 import scoring
 
@@ -36,6 +37,10 @@ def require_password():
     """Password-gate the whole app when APP_PASSWORD is set (i.e. on a hosted
     deploy). Left open when unset so local use needs no login. Basic auth over
     Railway's HTTPS; the username is ignored, only the password must match."""
+    # The vendor lead-intake webhook authenticates with its own API key
+    # (it can't do a browser login), so it's exempt from the password gate.
+    if request.path == "/api/intake":
+        return None
     password = os.environ.get("APP_PASSWORD", "")
     if not password:
         return None
@@ -79,6 +84,9 @@ def lead_filters(args):
     if args.get("industry"):
         where.append("industry = ?")
         params.append(args["industry"])
+    if args.get("market_type"):
+        where.append("market_type = ?")
+        params.append(args["market_type"])
     if args.get("q"):
         where.append("(business_name LIKE ? OR phone LIKE ?)")
         like = f"%{args['q']}%"
@@ -272,6 +280,70 @@ def export_vicidial():
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={name}"},
     )
+
+
+# ---------------------------------------------------------------- B2C lead intake
+
+@app.route("/api/intake", methods=["POST"])
+def api_intake():
+    """Vendor/ad-funnel webhook: POST a single consumer lead as JSON.
+    Auth: header 'X-Intake-Key' must equal the INTAKE_API_KEY env var.
+    Exempt from the browser password gate (see require_password)."""
+    expected = os.environ.get("INTAKE_API_KEY", "")
+    if not expected:
+        return jsonify({"error": "Lead intake is not enabled (INTAKE_API_KEY unset)"}), 503
+    if request.headers.get("X-Intake-Key", "") != expected:
+        return jsonify({"error": "Invalid intake key"}), 401
+
+    data = request.get_json(silent=True) or {}
+    # accept first/last split or a combined name
+    payload = {
+        "name": data.get("name") or "",
+        "first_name": data.get("first_name") or "",
+        "last_name": data.get("last_name") or "",
+        "phone": data.get("phone") or data.get("mobile") or "",
+        "email": data.get("email") or "",
+        "city": data.get("city") or "",
+        "state": data.get("state") or "",
+        "postcode": data.get("zip") or data.get("postcode") or "",
+        "product_interest": data.get("product_interest") or data.get("interest") or "",
+        "preferred_contact_time": data.get("preferred_contact_time") or "",
+        "consent_status": data.get("consent") if data.get("consent") is not None
+                          else data.get("consent_status", ""),
+        "consent_at": data.get("consent_at") or "",
+        "notes": data.get("notes") or "",
+    }
+    source = "api:" + (data.get("source") or "vendor")
+    conn = get_db()
+    campaign = None
+    if data.get("campaign"):
+        campaign = conn.execute(
+            "SELECT * FROM campaigns WHERE slug = ?", (data["campaign"],)
+        ).fetchone()
+    result = leads_intake.intake_one(conn, payload, source, campaign=campaign)
+    conn.commit()
+    status = 201 if result == "added" else 200
+    return jsonify({"ok": result != "invalid", "result": result}), (
+        400 if result == "invalid" else status)
+
+
+@app.route("/import/leads", methods=["GET", "POST"])
+def import_leads():
+    """Upload a CSV list of consumer (B2C) leads."""
+    summary = error = None
+    if request.method == "POST":
+        f = request.files.get("file")
+        if not f or not f.filename:
+            error = "Choose a CSV file first."
+        else:
+            try:
+                text = f.read().decode("utf-8-sig", errors="replace")
+                summary = leads_intake.import_csv(get_db(), text, f"csv:{f.filename}")
+                summary["filename"] = f.filename
+            except ValueError as e:
+                error = str(e)
+    return render_template("import_leads.html", summary=summary, error=error,
+                           intake_enabled=bool(os.environ.get("INTAKE_API_KEY")))
 
 
 # ---------------------------------------------------------------- call log import

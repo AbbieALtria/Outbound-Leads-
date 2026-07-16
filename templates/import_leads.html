@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Import Leads — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<div class="settings-grid">
+  <section class="card">
+    <h2>Import B2C leads (CSV)</h2>
+    <p class="dim">Upload a consumer-lead list from a vendor or your ad funnel. Leads are
+    deduped by phone and stored as B2C with their consent info. Columns are auto-detected —
+    common names work (name, phone, email, city, state, zip, product/interest, consent, source).</p>
+
+    <form method="post" enctype="multipart/form-data" class="inline-form">
+      <input type="file" name="file" accept=".csv,text/csv" required>
+      <button type="submit" class="primary">Import</button>
+    </form>
+
+    {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
+
+    {% if summary %}
+      <div class="import-summary">
+        <h2>Imported {{ summary['filename'] }}</h2>
+        <ul>
+          <li><strong>{{ summary['added'] }}</strong> new leads added</li>
+          <li><strong>{{ summary['duplicates'] }}</strong> duplicates skipped (phone already known)</li>
+          <li><strong>{{ summary['invalid'] }}</strong> rows skipped (missing name or valid phone)</li>
+          <li class="dim">{{ summary['total'] }} rows processed</li>
+        </ul>
+        <p><a class="button" href="{{ url_for('history', market_type='b2c') }}">Review B2C leads in History</a></p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Real-time intake API</h2>
+    <p class="dim small">Lead vendors can POST leads to you in real time. Point them at:</p>
+    <table class="mini">
+      <tr><td><strong>Endpoint</strong></td><td><code>POST /api/intake</code></td></tr>
+      <tr><td><strong>Header</strong></td><td><code>X-Intake-Key: &lt;your key&gt;</code></td></tr>
+      <tr><td><strong>Body</strong></td><td><code>application/json</code></td></tr>
+    </table>
+    <p class="dim small">Example body:</p>
+    <pre class="code-block">{
+  "name": "Jane Doe",
+  "phone": "813-555-0142",
+  "email": "jane@example.com",
+  "city": "Tampa", "state": "FL", "zip": "33601",
+  "product_interest": "Solar",
+  "consent": true,
+  "consent_at": "2026-07-16T10:22:00Z",
+  "source": "PX",
+  "campaign": "solar"
+}</pre>
+    {% if intake_enabled %}
+      <p class="badge badge-ok">intake enabled</p>
+    {% else %}
+      <p class="badge badge-hot">disabled</p>
+      <p class="dim small">Set the <code>INTAKE_API_KEY</code> environment variable (in Railway → Variables,
+      or your local <code>.env</code>) to a strong secret, then share it only with your lead vendor.
+      The endpoint stays closed until it's set.</p>
+    {% endif %}
+    <p class="dim small">⚠️ Every B2C lead must carry documented consent before dialing — run your DNC/TCPA scrub too.</p>
+  </section>
+</div>
+
+{% endblock %}
