@@ -233,6 +233,8 @@ LEAD_EXTRA_COLUMNS = {
     # Extra fields their VICIdial upload uses (the red-tagged columns).
     "street_address": "TEXT NOT NULL DEFAULT ''",       # street line only (Outscraper 'street')
     "maps_url": "TEXT NOT NULL DEFAULT ''",             # Google Maps place link
+    "country": "TEXT NOT NULL DEFAULT ''",              # for geo filtering
+    "facebook": "TEXT NOT NULL DEFAULT ''",             # Facebook page URL if listed
 }
 
 # Extra columns on pull_runs added after first release.

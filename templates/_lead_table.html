@@ -24,6 +24,16 @@
       <td>
         <strong>{{ lead['business_name'] }}</strong>
         {% if lead['address'] %}<div class="dim small">{{ lead['address'] }}</div>{% endif %}
+        <div class="small links">
+          {% if lead['maps_url'] %}
+            <a href="{{ lead['maps_url'] }}" target="_blank" rel="noopener">&#128205; map</a>
+          {% elif lead['address'] or lead['business_name'] %}
+            <a href="https://www.google.com/maps/search/?api=1&query={{ (lead['business_name'] ~ ', ' ~ lead['address'])|urlencode }}" target="_blank" rel="noopener">&#128205; map</a>
+          {% endif %}
+          {% if lead['facebook'] %}
+            <a href="{{ lead['facebook'] }}" target="_blank" rel="noopener">&#9755; fb</a>
+          {% endif %}
+        </div>
         {% if lead['contact'] or lead['email'] %}
         <div class="small contact-line">
           {% if lead['contact'] %}&#128100; {{ lead['contact'] }}{% endif %}

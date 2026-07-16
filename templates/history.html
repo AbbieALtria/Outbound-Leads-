@@ -13,6 +13,22 @@
         {% endfor %}
       </select>
     </label>
+    <label>Country
+      <select name="country">
+        <option value="">all</option>
+        {% for c in countries %}
+        <option value="{{ c }}" {{ 'selected' if c == f.get('country') }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>State/Prov
+      <select name="state">
+        <option value="">all</option>
+        {% for s in states %}
+        <option value="{{ s }}" {{ 'selected' if s == f.get('state') }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>City
       <select name="city">
         <option value="">all</option>

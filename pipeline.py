@@ -466,8 +466,9 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
                         "INSERT OR IGNORE INTO leads (phone, business_name, address, city, state, "
                         "website, category, industry, score, call_hook, pulled_date, "
                         "email, contact, postcode, search_query, run_id, "
-                        "reviews, rating, unclaimed, street_address, maps_url) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "reviews, rating, unclaimed, street_address, maps_url, "
+                        "country, facebook) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             phone, name, address,
                             place.get("city") or city_row["name"],
@@ -482,6 +483,8 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
                             reviews, rating, unclaimed,
                             place.get("street") or "",
                             place.get("location_link") or place.get("url") or "",
+                            place.get("country") or "",
+                            place.get("facebook") or "",
                         ),
                     )
                     if cur.rowcount:  # 0 when the phone was already seen (dedupe)

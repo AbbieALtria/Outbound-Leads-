@@ -190,6 +190,12 @@ def lead_filters(args):
     if args.get("status"):
         where.append("status = ?")
         params.append(args["status"])
+    if args.get("country"):
+        where.append("country = ?")
+        params.append(args["country"])
+    if args.get("state"):
+        where.append("state = ?")
+        params.append(args["state"])
     if args.get("city"):
         where.append("city = ?")
         params.append(args["city"])
@@ -271,13 +277,13 @@ def dashboard():
 def history():
     conn = get_db()
     leads = fetch_leads(conn, request.args)
-    cities = [r["city"] for r in conn.execute(
-        "SELECT DISTINCT city FROM leads WHERE city != '' ORDER BY city"
-    )]
+    distinct = lambda col: [r[col] for r in conn.execute(
+        f"SELECT DISTINCT {col} FROM leads WHERE {col} != '' ORDER BY {col}")]
     industries = conn.execute("SELECT * FROM industries ORDER BY label").fetchall()
     return render_template(
-        "history.html", leads=leads, cities=cities, industries=industries,
-        statuses=db.LEAD_STATUSES, f=request.args,
+        "history.html", leads=leads,
+        countries=distinct("country"), states=distinct("state"), cities=distinct("city"),
+        industries=industries, statuses=db.LEAD_STATUSES, f=request.args,
     )
 
 
