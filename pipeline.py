@@ -337,12 +337,14 @@ def _is_cancelled(conn, run_id):
     return bool(row and row["cancel"])
 
 
-def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, log=print):
+def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
+             db_path=db.DB_FILE, log=print):
     """Execute one pull. Returns the number of leads added.
 
     industry_slugs: one slug, a comma-separated string, or a list of slugs.
-    Cities rotate least-recently-pulled first; within a city every selected
-    industry is queried; the pull stops the moment `target` total leads are in.
+    location: an optional dict {city, state, country} entered on the dashboard —
+    the pull targets exactly that place. If omitted, it falls back to rotating
+    the saved cities in Settings. The pull stops the moment `target` leads are in.
 
     Opens its own DB connection so it is safe to call from a background thread.
     If run_id is given, progress is written to that pull_runs row as it goes.
@@ -368,13 +370,28 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
         if not industries:
             raise RuntimeError("No industry selected")
 
-        # Least-recently-pulled enabled cities first (never-pulled before that).
-        cities = conn.execute(
-            "SELECT * FROM cities WHERE enabled = 1 "
-            "ORDER BY last_pulled_at IS NOT NULL, last_pulled_at, id"
-        ).fetchall()
-        if not cities:
-            raise RuntimeError("No enabled cities. Add cities in Settings first.")
+        # Where to pull: an explicit location entered on the dashboard, else the
+        # saved-cities rotation. A "target" carries the query label + the geo to
+        # stamp on leads; db_id is set only for saved cities (to touch last_pulled).
+        loc = location or {}
+        loc_city = (loc.get("city") or "").strip()
+        loc_state = (loc.get("state") or "").strip()
+        loc_country = (loc.get("country") or "").strip()
+        if loc_city or loc_state:
+            label = ", ".join(p for p in (loc_city, loc_state, loc_country) if p)
+            targets = [{"label": label, "city": loc_city, "state": loc_state,
+                        "country": loc_country, "db_id": None}]
+        else:
+            rows = conn.execute(
+                "SELECT * FROM cities WHERE enabled = 1 "
+                "ORDER BY last_pulled_at IS NOT NULL, last_pulled_at, id"
+            ).fetchall()
+            if not rows:
+                raise RuntimeError(
+                    "Enter a City/State to pull, or add cities in Settings.")
+            targets = [{"label": f"{r['name']}, {r['state']}", "city": r["name"],
+                        "state": r["state"], "country": "", "db_id": r["id"]}
+                       for r in rows]
 
         buffer_multiplier = float(db.get_setting(conn, "buffer_multiplier", "2.0"))
         enrich = db.get_setting(conn, "contact_enrichment", "1") == "1"
@@ -393,14 +410,14 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
         cancelled = False
 
         names = "+".join(s for s in industry_slugs)
-        log(f"Target: {target} fresh {names} leads across {len(cities)} cities")
+        log(f"Target: {target} fresh {names} leads across {len(targets)} location(s)")
 
-        for city_row in cities:
+        for target_loc in targets:
             if added_total >= target or _is_cancelled(conn, run_id):
                 cancelled = _is_cancelled(conn, run_id)
                 break
 
-            city_label = f"{city_row['name']}, {city_row['state']}"
+            city_label = target_loc["label"]
 
             for industry, chain_names in industries:
                 if added_total >= target:
@@ -457,8 +474,8 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
                     signal_lead = {
                         "website": website, "email": email, "reviews": reviews,
                         "rating": rating, "unclaimed": unclaimed,
-                        "city": place.get("city") or city_row["name"],
-                        "state": place.get("state") or place.get("region") or city_row["state"],
+                        "city": place.get("city") or target_loc["city"],
+                        "state": place.get("state") or place.get("region") or target_loc["state"],
                     }
                     score, hook = scoring.evaluate(signal_lead, rules)
 
@@ -471,8 +488,8 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             phone, name, address,
-                            place.get("city") or city_row["name"],
-                            place.get("state") or place.get("region") or city_row["state"],
+                            place.get("city") or target_loc["city"],
+                            place.get("state") or place.get("region") or target_loc["state"],
                             website,
                             place.get("type") or place.get("category") or slug,
                             slug, score, hook, today,
@@ -483,7 +500,7 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
                             reviews, rating, unclaimed,
                             place.get("street") or "",
                             place.get("location_link") or place.get("url") or "",
-                            place.get("country") or "",
+                            place.get("country") or target_loc["country"],
                             place.get("facebook") or "",
                         ),
                     )
@@ -497,10 +514,11 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
                 log(f"  -> {added_this_query} new qualified leads ({slug}, {city_label})")
                 time.sleep(1)  # be polite to the API between calls
 
-            conn.execute(
-                "UPDATE cities SET last_pulled_at = ? WHERE id = ?",
-                (db.now_iso(), city_row["id"]),
-            )
+            if target_loc["db_id"] is not None:
+                conn.execute(
+                    "UPDATE cities SET last_pulled_at = ? WHERE id = ?",
+                    (db.now_iso(), target_loc["db_id"]),
+                )
             conn.commit()
 
         if added_total == 0 and query_errors > 0:

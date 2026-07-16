@@ -21,6 +21,9 @@
       <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == default_industry }}>{{ ind['label'] }}</option>
       {% endfor %}
     </select>
+    <input id="pull-country" class="geo" type="text" value="{{ last_country }}" placeholder="Country" title="Country">
+    <input id="pull-state" class="geo" type="text" value="{{ last_state }}" placeholder="State/Province" title="State or province">
+    <input id="pull-city" class="geo" type="text" value="{{ last_city }}" placeholder="City" title="City">
     <input id="pull-target" type="number" min="1" max="1000" value="{{ default_target }}" title="How many leads to pull">
     <button id="pull-btn" class="primary" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
     <button id="stop-btn" class="danger" hidden>Stop</button>

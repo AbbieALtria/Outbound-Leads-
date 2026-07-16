@@ -144,6 +144,11 @@ if (pullBtn) {
       await postJSON("/api/pull", {
         industries: [industry],
         target: document.getElementById("pull-target").value,
+        location: {
+          country: (document.getElementById("pull-country") || {}).value || "",
+          state: (document.getElementById("pull-state") || {}).value || "",
+          city: (document.getElementById("pull-city") || {}).value || "",
+        },
       });
       poll();
     } catch (e) {

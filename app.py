@@ -269,6 +269,9 @@ def dashboard():
         campaigns=campaigns, active_campaign=active_campaign,
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         default_target=db.get_setting(conn, "target_leads_per_day", "100"),
+        last_city=db.get_setting(conn, "last_city", ""),
+        last_state=db.get_setting(conn, "last_state", ""),
+        last_country=db.get_setting(conn, "last_country", "USA"),
         api_key_set=bool(pipeline.get_api_key()),
     )
 
@@ -568,9 +571,10 @@ def set_lead_notes(lead_id):
 
 # ---------------------------------------------------------------- pull control
 
-def _pull_worker(run_id, industries, target, api_key):
+def _pull_worker(run_id, industries, target, api_key, location):
     try:
-        pipeline.run_pull(industries, target, api_key, run_id=run_id, log=lambda *_: None)
+        pipeline.run_pull(industries, target, api_key, location=location,
+                          run_id=run_id, log=lambda *_: None)
     except Exception:
         pass  # error is already recorded on the pull_runs row
     finally:
@@ -597,6 +601,23 @@ def start_pull():
     if target < 1:
         return jsonify({"error": "Target must be at least 1"}), 400
 
+    # Location entered on the dashboard (city/state/country). Remember it so the
+    # inputs pre-fill next time.
+    loc = payload.get("location") or {}
+    location = {"city": (loc.get("city") or "").strip(),
+                "state": (loc.get("state") or "").strip(),
+                "country": (loc.get("country") or "").strip()}
+    if not (location["city"] or location["state"]):
+        # No location typed: only allowed if there are saved cities to fall back on.
+        if not conn.execute("SELECT 1 FROM cities WHERE enabled = 1 LIMIT 1").fetchone():
+            return jsonify({"error": "Enter a City and State to pull from."}), 400
+        location = None
+    else:
+        for key, setting in (("city", "last_city"), ("state", "last_state"),
+                             ("country", "last_country")):
+            db.set_setting(conn, setting, location[key])
+        conn.commit()
+
     if not _pull_lock.acquire(blocking=False):
         return jsonify({"error": "A pull is already running"}), 409
 
@@ -608,7 +629,8 @@ def start_pull():
     run_id = cur.lastrowid
 
     threading.Thread(
-        target=_pull_worker, args=(run_id, industries, target, api_key), daemon=True
+        target=_pull_worker, args=(run_id, industries, target, api_key, location),
+        daemon=True,
     ).start()
     return jsonify({"ok": True, "run_id": run_id})
 

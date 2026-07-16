@@ -118,6 +118,7 @@ tr.active-campaign { background: #e3ecfd; }
   font-family: ui-monospace, monospace; }
 .query-edit button { font-size: 12px; padding: 3px 8px; }
 #pull-target { width: 80px; }
+.pull-controls .geo { width: 120px; }
 /* :not([hidden]) so the `hidden` attribute (display:none) actually wins */
 .pull-progress { margin-top: 10px; gap: 10px; align-items: center; color: var(--dim); }
 .pull-progress:not([hidden]) { display: flex; }
