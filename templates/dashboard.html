@@ -28,11 +28,16 @@
       {% endfor %}
     </select>
     <select id="pull-state" class="geo" title="State or province"></select>
-    <input id="pull-city" class="geo" type="text" list="city-list" value="{{ last_city }}"
-           placeholder="City" title="City — type or pick" autocomplete="off">
-    <datalist id="city-list">
-      {% for c in known_cities %}<option value="{{ c }}">{% endfor %}
-    </datalist>
+    {% set city_options = ([last_city] + known_cities) if (last_city and last_city not in known_cities) else known_cities %}
+    <select id="pull-city" class="geo" title="City to pull">
+      <option value="">City…</option>
+      {% for c in city_options %}
+      <option value="{{ c }}" {{ 'selected' if c == last_city }}>{{ c }}</option>
+      {% endfor %}
+      <option value="__new__">＋ new city…</option>
+    </select>
+    <input id="pull-city-new" class="geo" type="text" placeholder="Type city" autocomplete="off" hidden>
+    <datalist id="city-list"></datalist>
     <input id="pull-target" type="number" min="1" max="1000" value="{{ default_target }}" title="How many leads to pull">
     <button id="pull-btn" class="primary" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
     <button id="stop-btn" class="danger" hidden>Stop</button>

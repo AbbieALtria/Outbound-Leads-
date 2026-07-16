@@ -39,6 +39,24 @@ async function postJSON(url, body) {
   country.addEventListener("change", fill);
 })();
 
+// ---- city: "+ new city" reveals a text box; otherwise pick from the dropdown ----
+function currentCity() {
+  const sel = document.getElementById("pull-city");
+  const box = document.getElementById("pull-city-new");
+  if (sel && sel.value === "__new__") return box && box.value ? box.value.trim() : "";
+  return sel ? sel.value : "";
+}
+(function initCity() {
+  const sel = document.getElementById("pull-city");
+  const box = document.getElementById("pull-city-new");
+  if (!sel || !box) return;
+  sel.addEventListener("change", () => {
+    const isNew = sel.value === "__new__";
+    box.hidden = !isNew;
+    if (isNew) box.focus();
+  });
+})();
+
 // ---- status buttons ----
 document.querySelectorAll("tr[data-lead-id]").forEach((row) => {
   const leadId = row.dataset.leadId;
@@ -175,7 +193,7 @@ if (pullBtn) {
         location: {
           country: (document.getElementById("pull-country") || {}).value || "",
           state: (document.getElementById("pull-state") || {}).value || "",
-          city: (document.getElementById("pull-city") || {}).value || "",
+          city: currentCity(),
         },
       });
       poll();
