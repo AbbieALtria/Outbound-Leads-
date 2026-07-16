@@ -21,9 +21,18 @@
       <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == default_industry }}>{{ ind['label'] }}</option>
       {% endfor %}
     </select>
-    <input id="pull-country" class="geo" type="text" value="{{ last_country }}" placeholder="Country" title="Country">
-    <input id="pull-state" class="geo" type="text" value="{{ last_state }}" placeholder="State/Province" title="State or province">
-    <input id="pull-city" class="geo" type="text" value="{{ last_city }}" placeholder="City" title="City">
+    <select id="pull-country" class="geo" title="Country"
+            data-states='{{ states_by_country|tojson }}' data-last-state="{{ last_state }}">
+      {% for c in countries %}
+      <option value="{{ c }}" {{ 'selected' if c == last_country }}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <select id="pull-state" class="geo" title="State or province"></select>
+    <input id="pull-city" class="geo" type="text" list="city-list" value="{{ last_city }}"
+           placeholder="City" title="City — type or pick" autocomplete="off">
+    <datalist id="city-list">
+      {% for c in known_cities %}<option value="{{ c }}">{% endfor %}
+    </datalist>
     <input id="pull-target" type="number" min="1" max="1000" value="{{ default_target }}" title="How many leads to pull">
     <button id="pull-btn" class="primary" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
     <button id="stop-btn" class="danger" hidden>Stop</button>
@@ -62,27 +71,13 @@
     {% endif %}
     <a class="dim small" href="{{ url_for('history') }}">View all {{ total_leads }} leads in History →</a>
   </div>
-  <form method="get" class="inline-form">
-    {% if run_id %}<input type="hidden" name="run_id" value="{{ run_id }}">{% endif %}
-    <label>Status
-      <select name="status" onchange="this.form.submit()">
-        <option value="">all</option>
-        {% for s in statuses %}
-        <option value="{{ s }}" {{ 'selected' if s == current_status }}>{{ s.replace('_', ' ') }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
   <div class="stats">
-    {% for s in statuses %}
-      <span class="stat stat-{{ s }}">{{ s.replace('_', ' ') }}: <strong>{{ counts[s] }}</strong></span>
-    {% endfor %}
     <button id="verify-btn" class="button" {{ 'disabled' if not api_key_set or not run_id }}
-      data-run_id="{{ run_id or '' }}" data-status="{{ current_status }}"
+      data-run_id="{{ run_id or '' }}"
       title="Check this pull's phone numbers via Outscraper (costs credits); marks dead lines invalid">Verify phones</button>
-    <a class="button primary-outline" href="{{ url_for('export_vicidial', run_id=run_id, status='new') }}"
-       title="This pull's uncalled leads, VICIdial loader format, DNC + invalid phones excluded">VICIdial CSV</a>
-    <a class="button" href="{{ url_for('export_csv', run_id=run_id, status=current_status or None) }}">Export CSV</a>
+    <a class="button primary-outline" href="{{ url_for('export_vicidial', run_id=run_id) }}"
+       title="This pull's leads, VICIdial loader format, DNC + invalid phones excluded">VICIdial CSV</a>
+    <a class="button" href="{{ url_for('export_csv', run_id=run_id) }}">Export CSV</a>
   </div>
 </section>
 <div id="verify-result" class="pull-result" hidden></div>

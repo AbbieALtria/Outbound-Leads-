@@ -269,9 +269,12 @@ def dashboard():
         campaigns=campaigns, active_campaign=active_campaign,
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         default_target=db.get_setting(conn, "target_leads_per_day", "100"),
+        countries=COUNTRIES, states_by_country=STATES_BY_COUNTRY,
+        known_cities=[r["city"] for r in conn.execute(
+            "SELECT DISTINCT city FROM leads WHERE city != '' ORDER BY city")],
         last_city=db.get_setting(conn, "last_city", ""),
         last_state=db.get_setting(conn, "last_state", ""),
-        last_country=db.get_setting(conn, "last_country", "USA"),
+        last_country=db.get_setting(conn, "last_country", "United States"),
         api_key_set=bool(pipeline.get_api_key()),
     )
 
@@ -354,6 +357,25 @@ def abbrev_state(state):
     if len(state) == 2:
         return state.upper()
     return STATE_ABBREV.get(state.title(), state)
+
+
+# Geo dropdown data. State list cascades from the chosen country; countries
+# without a predefined list fall back to the "City" box only.
+STATES_BY_COUNTRY = {
+    "United States": sorted(STATE_ABBREV.keys()),
+    "Canada": ["Alberta", "British Columbia", "Manitoba", "New Brunswick",
+               "Newfoundland and Labrador", "Northwest Territories", "Nova Scotia",
+               "Nunavut", "Ontario", "Prince Edward Island", "Quebec",
+               "Saskatchewan", "Yukon"],
+    "United Kingdom": ["England", "Scotland", "Wales", "Northern Ireland"],
+    "Australia": ["New South Wales", "Victoria", "Queensland", "Western Australia",
+                  "South Australia", "Tasmania", "Australian Capital Territory",
+                  "Northern Territory"],
+}
+COUNTRIES = ["United States", "Canada", "United Kingdom", "Australia", "Ireland",
+             "New Zealand", "India", "Philippines", "Mexico", "Germany", "France",
+             "Spain", "Italy", "Netherlands", "Brazil", "South Africa",
+             "United Arab Emirates", "Singapore"]
 
 
 def vici_phone(phone):

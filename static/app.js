@@ -11,6 +11,34 @@ async function postJSON(url, body) {
   return data;
 }
 
+// ---- geo: cascade the State/Province dropdown from the chosen Country ----
+(function initGeo() {
+  const country = document.getElementById("pull-country");
+  const state = document.getElementById("pull-state");
+  if (!country || !state) return;
+  let statesByCountry = {};
+  try { statesByCountry = JSON.parse(country.dataset.states || "{}"); } catch {}
+  const lastState = country.dataset.lastState || "";
+  const fill = () => {
+    const list = statesByCountry[country.value] || [];
+    state.innerHTML = "";
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = list.length ? "State/Province" : "(use City)";
+    state.appendChild(blank);
+    list.forEach((s) => {
+      const o = document.createElement("option");
+      o.value = s;
+      o.textContent = s;
+      if (s === lastState) o.selected = true;
+      state.appendChild(o);
+    });
+    state.disabled = list.length === 0;
+  };
+  fill();
+  country.addEventListener("change", fill);
+})();
+
 // ---- status buttons ----
 document.querySelectorAll("tr[data-lead-id]").forEach((row) => {
   const leadId = row.dataset.leadId;

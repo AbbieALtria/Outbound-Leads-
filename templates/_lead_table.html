@@ -13,7 +13,6 @@
       <th>Score</th>
       <th>Call hook</th>
       {% if show_date %}<th>Pulled</th>{% endif %}
-      <th>Outcome</th>
       <th>Notes</th>
     </tr>
   </thead>
@@ -64,22 +63,6 @@
       <td><span class="score">{{ lead['score'] }}</span></td>
       <td class="hook small">{{ lead['call_hook'] }}</td>
       {% if show_date %}<td class="nowrap dim small">{{ lead['pulled_date'] }}</td>{% endif %}
-      <td class="nowrap">
-        <div class="status-buttons">
-          <button class="sbtn sbtn-called {{ 'on' if lead['status'] == 'called' }}"
-                  data-status="called" title="Called">Called</button>
-          <button class="sbtn sbtn-interested {{ 'on' if lead['status'] == 'interested' }}"
-                  data-status="interested" title="Interested">Int.</button>
-          {% if show_appointment %}
-          <button class="sbtn sbtn-appointment {{ 'on' if lead['status'] == 'appointment' }}"
-                  data-status="appointment" title="Appointment set">Appt</button>
-          {% endif %}
-          <button class="sbtn sbtn-not_interested {{ 'on' if lead['status'] == 'not_interested' }}"
-                  data-status="not_interested" title="Not interested">No</button>
-          <button class="sbtn sbtn-callback {{ 'on' if lead['status'] == 'callback' }}"
-                  data-status="callback" title="Callback">Callb.</button>
-        </div>
-      </td>
       <td><input class="notes" type="text" value="{{ lead['notes'] }}" placeholder="notes…"></td>
     </tr>
     {% endfor %}
