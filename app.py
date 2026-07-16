@@ -19,6 +19,7 @@ from flask import (Flask, Response, g, jsonify, redirect, render_template,
 
 import db
 import dialer_import
+import dnc
 import leads_intake
 import pipeline
 import scoring
@@ -280,6 +281,54 @@ def export_vicidial():
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={name}"},
     )
+
+
+# ---------------------------------------------------------------- DNC suppression
+
+@app.route("/dnc")
+def dnc_page():
+    conn = get_db()
+    recent = conn.execute(
+        "SELECT phone, source, reason, added_at FROM dnc_numbers ORDER BY added_at DESC LIMIT 20"
+    ).fetchall()
+    by_source = conn.execute(
+        "SELECT source, COUNT(*) AS n FROM dnc_numbers GROUP BY source ORDER BY n DESC"
+    ).fetchall()
+    return render_template(
+        "dnc.html", total=dnc.count(conn), recent=recent, by_source=by_source,
+        blocked_leads=conn.execute("SELECT COUNT(*) AS n FROM leads WHERE status='dnc'").fetchone()["n"],
+        provider_configured=bool(os.environ.get("DNC_API_KEY")),
+    )
+
+
+@app.route("/dnc/upload", methods=["POST"])
+def dnc_upload():
+    f = request.files.get("file")
+    conn = get_db()
+    result = {"added": 0, "rows": 0}
+    if f and f.filename:
+        text = f.read().decode("utf-8-sig", errors="replace")
+        result = dnc.import_csv(conn, text, source="upload")
+    blocked = dnc.scrub_leads(conn)  # apply the new list to existing leads
+    return render_template("dnc_result.html", added=result["added"], rows=result["rows"],
+                           blocked=blocked)
+
+
+@app.route("/dnc/add", methods=["POST"])
+def dnc_add():
+    number = request.form.get("phone", "").strip()
+    conn = get_db()
+    dnc.add_numbers(conn, [number], source="manual", reason="added by hand")
+    conn.commit()
+    dnc.scrub_leads(conn)
+    return redirect(url_for("dnc_page"))
+
+
+@app.route("/dnc/scrub", methods=["POST"])
+def dnc_scrub():
+    conn = get_db()
+    blocked = dnc.scrub_leads(conn)
+    return render_template("dnc_result.html", added=0, rows=0, blocked=blocked, scrub_only=True)
 
 
 # ---------------------------------------------------------------- B2C lead intake

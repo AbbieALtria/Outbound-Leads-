@@ -299,6 +299,13 @@ CREATE TABLE IF NOT EXISTS pull_runs (
     message TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS dnc_numbers (
+    phone TEXT PRIMARY KEY,                  -- 10-digit, normalized
+    source TEXT NOT NULL DEFAULT '',         -- upload | call_log | manual | federal | litigator
+    reason TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS campaigns (
     id INTEGER PRIMARY KEY,
     slug TEXT UNIQUE NOT NULL,

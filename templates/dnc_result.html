@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}DNC — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card" style="max-width:560px;">
+  <h2>DNC scrub complete</h2>
+  <ul>
+    {% if not scrub_only %}
+    <li><strong>{{ added }}</strong> new number(s) added to the suppression list ({{ rows }} rows read)</li>
+    {% endif %}
+    <li><strong>{{ blocked }}</strong> lead(s) newly blocked as <span class="badge badge-hot">dnc</span></li>
+  </ul>
+  <p class="dim small">Blocked leads are excluded from every VICIdial / CSV export.</p>
+  <p>
+    <a class="button" href="{{ url_for('dnc_page') }}">Back to DNC</a>
+    <a class="button" href="{{ url_for('history', status='dnc') }}">View blocked leads</a>
+  </p>
+</section>
+
+{% endblock %}

@@ -14,6 +14,7 @@ import re
 from datetime import date
 
 import db
+import dnc
 import scoring
 from dialer_import import normalize_phone, format_phone
 
@@ -87,12 +88,14 @@ def intake_one(conn, data, source, campaign=None):
         "city": data.get("city", ""), "state": data.get("state", ""),
     }
     score, hook = scoring.evaluate(lead, rules)
+    # A lead already on the suppression list arrives pre-blocked.
+    status = "dnc" if dnc.is_suppressed(conn, phone) else "new"
 
     cur = conn.execute(
         "INSERT OR IGNORE INTO leads (phone, business_name, email, city, state, postcode, "
         "category, product_interest, preferred_contact_time, market_type, lead_source, "
-        "consent_status, consent_at, score, call_hook, pulled_date, notes) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'b2c', ?, ?, ?, ?, ?, ?, ?)",
+        "consent_status, consent_at, score, call_hook, pulled_date, notes, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'b2c', ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             phone, name, data.get("email", ""), data.get("city", ""),
             data.get("state", ""), data.get("postcode", ""),
@@ -101,7 +104,7 @@ def intake_one(conn, data, source, campaign=None):
             source,
             _normalize_consent(data.get("consent_status", "")),
             data.get("consent_at", "") or db.now_iso(),
-            score, hook, str(date.today()), data.get("notes", ""),
+            score, hook, str(date.today()), data.get("notes", ""), status,
         ),
     )
     return "added" if cur.rowcount else "duplicate"

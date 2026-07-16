@@ -99,6 +99,12 @@ def apply_outcomes(conn, outcomes):
     summary = {"updated": 0, "kept": 0, "dnc_blocked": 0, "unmatched": 0}
     now = db.now_iso()
 
+    # Every DO-NOT-CALL number from the log goes onto the permanent suppression
+    # list, so it stays blocked even if it turns up in a future pull/import.
+    import dnc
+    dnc.add_numbers(conn, [p for p, s in outcomes.items() if s == "dnc"],
+                    source="call_log", reason="DO NOT CALL from dialer log")
+
     for phone, status in outcomes.items():
         if phone in existing:
             lead_id, current = existing[phone]

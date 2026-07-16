@@ -20,6 +20,7 @@ from pathlib import Path
 import requests
 
 import db
+import dnc
 import scoring
 
 OUTSCRAPER_URL = "https://api.outscraper.com/maps/search-v3"
@@ -499,6 +500,11 @@ def run_pull(industry_slugs, target, api_key, run_id=None, db_path=db.DB_FILE, l
 
         if added_total == 0 and query_errors > 0:
             raise RuntimeError(f"All {query_errors} queries failed. Last error: {last_error}")
+
+        # Suppress any freshly-pulled number already on the DNC list.
+        blocked = dnc.scrub_leads(conn, new_lead_ids)
+        if blocked:
+            log(f"  DNC-suppressed {blocked} of the new leads")
 
         # Live site-quality probe only for campaigns that explicitly want it
         # (SEO, web design) — set by the campaign's site_check flag.

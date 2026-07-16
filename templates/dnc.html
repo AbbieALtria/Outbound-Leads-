@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}DNC Suppression — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<div class="settings-grid">
+  <section class="card">
+    <h2>DNC suppression list</h2>
+    <p class="dim">Numbers here are blocked from every dial export and never re-served.
+    Upload your federal DNC files, internal DNC, or a TCPA-litigator list — matching
+    leads are marked <span class="badge badge-hot">dnc</span> automatically.</p>
+    <p><strong>{{ total }}</strong> suppressed number(s) · <strong>{{ blocked_leads }}</strong> leads currently blocked</p>
+
+    <form method="post" action="{{ url_for('dnc_upload') }}" enctype="multipart/form-data" class="inline-form">
+      <input type="file" name="file" accept=".csv,.txt,text/csv" required>
+      <button type="submit" class="primary">Upload &amp; scrub</button>
+    </form>
+    <p class="dim small">CSV/TXT with a phone column (or one number per line).</p>
+
+    <form method="post" action="{{ url_for('dnc_add') }}" class="inline-form" style="margin-top:10px;">
+      <input type="text" name="phone" placeholder="add one number" required>
+      <button type="submit">Add</button>
+    </form>
+
+    <form method="post" action="{{ url_for('dnc_scrub') }}" style="margin-top:10px;">
+      <button type="submit">Re-scrub all leads now</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Sources &amp; real-time scrub</h2>
+    {% if by_source %}
+    <table class="mini">
+      <tr><th>Source</th><th>Numbers</th></tr>
+      {% for s in by_source %}
+      <tr><td>{{ s['source'] or '(unlabeled)' }}</td><td>{{ s['n'] }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="dim">No suppressed numbers yet.</p>
+    {% endif %}
+
+    <div class="api-status">
+      Real-time provider scrub (federal + state DNC + TCPA litigator):
+      {% if provider_configured %}
+        <span class="badge badge-ok">configured</span>
+      {% else %}
+        <span class="badge badge-hot">not connected</span>
+        <p class="dim small">The internal list above works now. For live federal/state/litigator
+        scrubbing, pick a provider (DNCScrub, Blacklist Alliance, The DNC Project, TCPA Litigator List),
+        then set <code>DNC_PROVIDER</code> + <code>DNC_API_KEY</code> and we wire in its API.</p>
+      {% endif %}
+    </div>
+    <p class="dim small">⚠️ Tooling, not legal advice — always run your full compliance scrub before dialing.</p>
+  </section>
+</div>
+
+{% if recent %}
+<section class="card wide" style="margin-top:14px;">
+  <h2>Recently suppressed</h2>
+  <table class="mini">
+    <tr><th>Number</th><th>Source</th><th>Reason</th><th>Added</th></tr>
+    {% for r in recent %}
+    <tr>
+      <td class="nowrap">{{ r['phone'] }}</td>
+      <td>{{ r['source'] }}</td>
+      <td class="dim small">{{ r['reason'] }}</td>
+      <td class="nowrap dim small">{{ r['added_at'][:16].replace('T',' ') }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+
+{% endblock %}
