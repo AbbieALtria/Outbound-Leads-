@@ -203,6 +203,8 @@ DEFAULT_SETTINGS = {
     # Validate each new lead's phone (line type + drop dead numbers) during the
     # pull. Costs extra Outscraper credits per number; off by default.
     "phone_validation": "0",
+    # Drop VOIP + toll-free numbers from dial exports (better B2B connect rate).
+    "drop_voip_export": "0",
     "active_campaign": DEFAULT_ACTIVE_CAMPAIGN,
 }
 
@@ -235,6 +237,7 @@ LEAD_EXTRA_COLUMNS = {
     "maps_url": "TEXT NOT NULL DEFAULT ''",             # Google Maps place link
     "country": "TEXT NOT NULL DEFAULT ''",              # for geo filtering
     "facebook": "TEXT NOT NULL DEFAULT ''",             # Facebook page URL if listed
+    "business_status": "TEXT NOT NULL DEFAULT ''",      # OPERATIONAL / CLOSED_* (connect-rate)
 }
 
 # Extra columns on pull_runs added after first release.

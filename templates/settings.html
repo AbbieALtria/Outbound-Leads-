@@ -25,6 +25,10 @@
         <input type="checkbox" name="phone_validation" {{ 'checked' if phone_validation }}>
         Validate phone numbers during each pull (line type + drop dead numbers) — costs extra credits
       </label>
+      <label class="chk-row">
+        <input type="checkbox" name="drop_voip_export" {{ 'checked' if drop_voip_export }}>
+        Drop VOIP &amp; toll-free numbers from dial exports (better B2B connect rate)
+      </label>
       <button type="submit" class="primary">Save</button>
     </form>
     <div class="api-status">

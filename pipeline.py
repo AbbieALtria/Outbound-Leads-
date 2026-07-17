@@ -460,6 +460,9 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
                         continue
                     if is_chain(name, chain_names):
                         continue
+                    biz_status = (place.get("business_status") or "").upper()
+                    if "PERMANENTLY" in biz_status:
+                        continue  # dead business -> guaranteed non-connect
 
                     address = place.get("full_address") or place.get("address") or ""
                     website = place.get("site") or place.get("website") or ""
@@ -484,8 +487,8 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
                         "website, category, industry, score, call_hook, pulled_date, "
                         "email, contact, postcode, search_query, run_id, "
                         "reviews, rating, unclaimed, street_address, maps_url, "
-                        "country, facebook) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "country, facebook, business_status) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             phone, name, address,
                             place.get("city") or target_loc["city"],
@@ -502,6 +505,7 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
                             place.get("location_link") or place.get("url") or "",
                             place.get("country") or target_loc["country"],
                             place.get("facebook") or "",
+                            biz_status,
                         ),
                     )
                     if cur.rowcount:  # 0 when the phone was already seen (dedupe)

@@ -334,6 +334,7 @@ def settings():
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         contact_enrichment=db.get_setting(conn, "contact_enrichment", "1") == "1",
         phone_validation=db.get_setting(conn, "phone_validation", "0") == "1",
+        drop_voip_export=db.get_setting(conn, "drop_voip_export", "0") == "1",
         api_key_set=bool(pipeline.get_api_key()),
     )
 
@@ -411,6 +412,34 @@ def vici_phone(phone):
     return phone
 
 
+TOLL_FREE = {"800", "888", "877", "866", "855", "844", "833", "822"}
+
+
+def _is_toll_free(phone):
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return len(digits) == 10 and digits[:3] in TOLL_FREE
+
+
+def dialable_leads(conn, args):
+    """Leads fit to hand to VICIdial: not DNC, phone not flagged invalid, and the
+    business isn't closed — plus VOIP/toll-free dropped when the setting is on.
+    One place so every dial export stays consistent."""
+    drop_voip = db.get_setting(conn, "drop_voip_export", "0") == "1"
+    out = []
+    for lead in fetch_leads(conn, args):
+        if lead["status"] == "dnc" or not lead["phone_valid"]:
+            continue
+        if "CLOSED" in (lead["business_status"] or "").upper():
+            continue  # permanently-closed skipped at pull; this drops temp-closed too
+        if drop_voip and ("voip" in (lead["phone_type"] or "").lower()
+                          or _is_toll_free(lead["phone"])):
+            continue
+        out.append(lead)
+    return out
+
+
 def _street_of(lead):
     """Street-only line: the stored street, else the part of the full address
     before the first comma (legacy leads that predate the street column)."""
@@ -425,10 +454,9 @@ def export_vicidial():
     """Dial-ready export matching the client's VICIdial upload (the red-tagged
     columns of their raw file):
     Name, Full_Address, Street_Address, City, State, Zip, Website, Phone, Email, Category, URL
-    DNC and invalid-phone leads are never included."""
+    DNC, invalid-phone, and closed-business leads are never included."""
     conn = get_db()
-    leads = [l for l in fetch_leads(conn, request.args)
-             if l["status"] != "dnc" and l["phone_valid"]]
+    leads = dialable_leads(conn, request.args)
 
     fields = ["Name", "Full_Address", "Street_Address", "City", "State", "Zip",
               "Website", "Phone", "Email", "Category", "URL"]
@@ -950,6 +978,8 @@ def save_general_settings():
                    "1" if request.form.get("contact_enrichment") else "0")
     db.set_setting(conn, "phone_validation",
                    "1" if request.form.get("phone_validation") else "0")
+    db.set_setting(conn, "drop_voip_export",
+                   "1" if request.form.get("drop_voip_export") else "0")
     conn.commit()
     return redirect(url_for("settings"))
 
