@@ -205,6 +205,8 @@ DEFAULT_SETTINGS = {
     "phone_validation": "0",
     # Drop VOIP + toll-free numbers from dial exports (better B2B connect rate).
     "drop_voip_export": "0",
+    # Daily requeue job time, EST (HH:MM). Reads VICIdial dispositions.
+    "requeue_run_time": "23:30",
     "active_campaign": DEFAULT_ACTIVE_CAMPAIGN,
 }
 
@@ -321,6 +323,26 @@ CREATE TABLE IF NOT EXISTS dnc_numbers (
     phone TEXT PRIMARY KEY,                  -- 10-digit, normalized
     source TEXT NOT NULL DEFAULT '',         -- upload | call_log | manual | federal | litigator
     reason TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL
+);
+
+-- Leads that came back not-reached and are queued for redial. attempt_count is
+-- VICIdial's called_count (source of truth), not a counter we maintain.
+CREATE TABLE IF NOT EXISTS requeue_leads (
+    id INTEGER PRIMARY KEY,
+    lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    last_disposition TEXT NOT NULL DEFAULT '',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'active',     -- active | exhausted | excluded
+    updated_at TEXT NOT NULL,
+    UNIQUE(lead_id)
+);
+
+-- Not-interested (YPNI) numbers on a time-boxed cooldown (a temporary DNC).
+CREATE TABLE IF NOT EXISTS suppressed_leads (
+    phone TEXT PRIMARY KEY,                   -- 10-digit, normalized
+    reason TEXT NOT NULL DEFAULT '',
+    cooldown_until TEXT NOT NULL,
     added_at TEXT NOT NULL
 );
 

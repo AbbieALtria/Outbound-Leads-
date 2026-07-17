@@ -9,6 +9,7 @@ script (only for pulling; browsing existing leads works without it).
 
 import csv
 import io
+import json
 import os
 import re
 import threading
@@ -22,9 +23,12 @@ import dialer_import
 import dnc
 import geo_data
 import leads_intake
+import ops_dispositions
 import pipeline
+import requeue
 import scoring
 import users
+from dialer_import import normalize_phone
 
 app = Flask(__name__)
 # Signs the login session cookie. Stable across restarts when set in the env so
@@ -218,6 +222,8 @@ def lead_filters(args):
     if args.get("market_type"):
         where.append("market_type = ?")
         params.append(args["market_type"])
+    if args.get("requeue") == "active":
+        where.append("id IN (SELECT lead_id FROM requeue_leads WHERE state = 'active')")
     if args.get("q"):
         where.append("(business_name LIKE ? OR phone LIKE ?)")
         like = f"%{args['q']}%"
@@ -423,16 +429,23 @@ def _is_toll_free(phone):
 
 
 def dialable_leads(conn, args):
-    """Leads fit to hand to VICIdial: not DNC, phone not flagged invalid, and the
-    business isn't closed — plus VOIP/toll-free dropped when the setting is on.
-    One place so every dial export stays consistent."""
+    """Leads fit to hand to VICIdial: not DNC, phone not flagged invalid, business
+    not closed, not requeue-exhausted/excluded, and not within a YPNI cooldown —
+    plus VOIP/toll-free dropped when the setting is on. One place so every dial
+    export stays consistent."""
     drop_voip = db.get_setting(conn, "drop_voip_export", "0") == "1"
+    blocked = requeue.blocked_lead_ids(conn)
+    suppressed = requeue.suppressed_phones(conn)
     out = []
     for lead in fetch_leads(conn, args):
         if lead["status"] == "dnc" or not lead["phone_valid"]:
             continue
         if "CLOSED" in (lead["business_status"] or "").upper():
             continue  # permanently-closed skipped at pull; this drops temp-closed too
+        if lead["id"] in blocked:
+            continue  # requeue attempts exhausted, or manually excluded
+        if normalize_phone(lead["phone"]) in suppressed:
+            continue  # YPNI cooldown
         if drop_voip and ("voip" in (lead["phone_type"] or "").lower()
                           or _is_toll_free(lead["phone"])):
             continue
@@ -482,6 +495,76 @@ def export_vicidial():
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={name}"},
     )
+
+
+# ---------------------------------------------------------------- requeue
+
+def run_requeue_now(dry_run=False):
+    """Pull today's VICIdial dispositions and requeue/suppress. Returns a summary.
+    Safe to call from the scheduler or the 'Run now' button."""
+    conn = db.connect()
+    try:
+        summary = requeue.run(conn, dry_run=dry_run)
+        if not dry_run and "error" not in summary:
+            db.set_setting(conn, "requeue_last_run", db.now_iso())
+            db.set_setting(conn, "requeue_last_summary", json.dumps(summary))
+            conn.commit()
+        return summary
+    finally:
+        conn.close()
+
+
+@app.route("/requeue")
+def requeue_page():
+    conn = get_db()
+    last_summary = db.get_setting(conn, "requeue_last_summary", "")
+    try:
+        last_summary = json.loads(last_summary) if last_summary else None
+    except ValueError:
+        last_summary = None
+    active = conn.execute(
+        "SELECT COUNT(*) AS n FROM requeue_leads WHERE state='active'").fetchone()["n"]
+    return render_template(
+        "requeue.html", rows=requeue.dashboard_rows(conn),
+        active_count=active,
+        suppressed_count=conn.execute("SELECT COUNT(*) AS n FROM suppressed_leads").fetchone()["n"],
+        last_run=db.get_setting(conn, "requeue_last_run", ""),
+        last_summary=last_summary,
+        run_time=db.get_setting(conn, "requeue_run_time", "23:30"),
+        ops_connected=ops_dispositions.enabled(),
+        retry_codes=", ".join(ops_dispositions.RETRY_CODES),
+    )
+
+
+@app.route("/requeue/run", methods=["POST"])
+def requeue_run():
+    guard = _require_admin()
+    if guard:
+        return guard
+    dry = request.form.get("dry_run") == "1"
+    summary = run_requeue_now(dry_run=dry)
+    return render_template("requeue_result.html", summary=summary, dry_run=dry)
+
+
+@app.route("/requeue/<int:requeue_id>/exclude", methods=["POST"])
+def requeue_exclude(requeue_id):
+    conn = get_db()
+    conn.execute("UPDATE requeue_leads SET state='excluded', updated_at=? WHERE id=?",
+                 (db.now_iso(), requeue_id))
+    conn.commit()
+    return redirect(url_for("requeue_page"))
+
+
+@app.route("/requeue/<int:requeue_id>/reactivate", methods=["POST"])
+def requeue_reactivate(requeue_id):
+    conn = get_db()
+    # Only re-activate if still under the cap.
+    row = conn.execute("SELECT attempt_count FROM requeue_leads WHERE id=?", (requeue_id,)).fetchone()
+    if row and row["attempt_count"] < requeue.CAP:
+        conn.execute("UPDATE requeue_leads SET state='active', updated_at=? WHERE id=?",
+                     (db.now_iso(), requeue_id))
+        conn.commit()
+    return redirect(url_for("requeue_page"))
 
 
 # ---------------------------------------------------------------- DNC suppression
@@ -982,6 +1065,36 @@ def save_general_settings():
                    "1" if request.form.get("drop_voip_export") else "0")
     conn.commit()
     return redirect(url_for("settings"))
+
+
+_scheduler = None
+
+
+def _start_scheduler():
+    """Start the daily requeue job (EST) in-process. One gunicorn worker => one
+    scheduler, so it fires once. Off in tests via ENABLE_SCHEDULER=0."""
+    global _scheduler
+    if _scheduler is not None or os.environ.get("ENABLE_SCHEDULER", "1") != "1":
+        return
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        from zoneinfo import ZoneInfo
+        conn = db.connect()
+        run_time = db.get_setting(conn, "requeue_run_time", "23:30")
+        conn.close()
+        hour, _, minute = run_time.partition(":")
+        sched = BackgroundScheduler(timezone=ZoneInfo("America/New_York"))
+        sched.add_job(lambda: run_requeue_now(dry_run=False),
+                      CronTrigger(hour=int(hour or 23), minute=int(minute or 30)),
+                      id="requeue_daily", replace_existing=True)
+        sched.start()
+        _scheduler = sched
+    except Exception as e:  # never let scheduling break app boot
+        print(f"[scheduler] not started: {e}")
+
+
+_start_scheduler()
 
 
 def _port_in_use(host, port):

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Requeue — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card" style="max-width:600px;">
+  <h2>Requeue {{ 'dry run' if dry_run else 'run' }} — {{ summary.get('day', '') }}</h2>
+  {% if summary.get('error') %}
+    <p class="pull-result err">{{ summary['error'] }}</p>
+  {% else %}
+    {% if dry_run %}<p class="dim small">Dry run — nothing was written.</p>{% endif %}
+    <ul>
+      <li><strong>{{ summary.get('requeued', 0) }}</strong> requeued (back in the ready-to-dial pool)</li>
+      <li><strong>{{ summary.get('exhausted', 0) }}</strong> exhausted (hit 3 dials — dropped)</li>
+      <li><strong>{{ summary.get('suppressed', 0) }}</strong> suppressed for 90 days (YPNI)</li>
+      <li><strong>{{ summary.get('unmatched', 0) }}</strong> dialed numbers not in this app (ignored)</li>
+      <li class="dim">{{ summary.get('processed', 0) }} dispositions processed</li>
+    </ul>
+  {% endif %}
+  <p>
+    <a class="button" href="{{ url_for('requeue_page') }}">Back to Requeue</a>
+    {% if not summary.get('error') and not dry_run %}
+    <a class="button primary-outline" href="{{ url_for('export_vicidial', requeue='active') }}">VICIdial CSV (requeue)</a>
+    {% endif %}
+  </p>
+</section>
+
+{% endblock %}

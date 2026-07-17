@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Requeue — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="toolbar">
+  <div class="pull-controls">
+    <strong>Requeue</strong>
+    <span class="dim small">Not-reached leads ({{ retry_codes }}) go back into the ready-to-dial pool, capped at 3 dials. YPNI → 90-day suppression.</span>
+  </div>
+  <div class="pull-controls" style="margin-top:8px;">
+    <span>Active: <strong>{{ active_count }}</strong></span>
+    <span class="dim">·</span>
+    <span>Suppressed (YPNI): <strong>{{ suppressed_count }}</strong></span>
+    <span class="dim">·</span>
+    <span class="dim small">Daily run {{ run_time }} EST · last run: {{ last_run[:16].replace('T',' ') if last_run else 'never' }}</span>
+    <form method="post" action="{{ url_for('requeue_run') }}" style="margin-left:auto;">
+      <button type="submit" class="button" name="dry_run" value="1"
+        {{ 'disabled' if not ops_connected }}>Dry run</button>
+      <button type="submit" class="primary" {{ 'disabled' if not ops_connected }}>Run now</button>
+    </form>
+    <a class="button primary-outline" href="{{ url_for('export_vicidial', requeue='active') }}"
+       title="This requeue batch, VICIdial format (DNC/invalid/closed/suppressed excluded)">VICIdial CSV (requeue)</a>
+  </div>
+  {% if not ops_connected %}
+  <p class="warn" style="margin-top:8px;">VICIdial not connected — set <code>OPS_DB_HOST / OPS_DB_PORT / OPS_DB_NAME / OPS_DB_USER / OPS_DB_PASSWORD</code> in Railway → Variables to enable the daily pull.</p>
+  {% endif %}
+  {% if last_summary and 'error' not in last_summary %}
+  <p class="dim small" style="margin-top:6px;">Last: {{ last_summary.get('day','') }} — requeued {{ last_summary.get('requeued',0) }}, exhausted {{ last_summary.get('exhausted',0) }}, suppressed {{ last_summary.get('suppressed',0) }}, unmatched {{ last_summary.get('unmatched',0) }}.</p>
+  {% endif %}
+</section>
+
+{% if rows %}
+<div class="table-wrap">
+<table class="leads">
+  <thead>
+    <tr><th>#</th><th>Business</th><th>Phone</th><th>City</th><th>Disposition</th><th>Attempts</th><th>State</th><th>Updated</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="dim">{{ loop.index }}</td>
+      <td><strong>{{ r['business_name'] }}</strong></td>
+      <td class="nowrap"><a href="tel:{{ r['phone'] }}">{{ r['phone'] }}</a></td>
+      <td class="nowrap">{{ r['city'] }}{% if r['lead_state'] %}, {{ r['lead_state'] }}{% endif %}</td>
+      <td class="nowrap">{{ r['last_disposition'] }}</td>
+      <td>{{ r['attempt_count'] }} / 3</td>
+      <td>
+        {% if r['state'] == 'active' %}<span class="badge badge-ok">active</span>
+        {% elif r['state'] == 'exhausted' %}<span class="badge badge-hot">exhausted</span>
+        {% else %}<span class="badge">excluded</span>{% endif %}
+      </td>
+      <td class="nowrap dim small">{{ r['updated_at'][:16].replace('T',' ') }}</td>
+      <td class="nowrap actions">
+        {% if r['state'] == 'active' %}
+        <form method="post" action="{{ url_for('requeue_exclude', requeue_id=r['id']) }}"
+              onsubmit="return confirm('Exclude {{ r['business_name'] }} from the ready-to-dial pool?')">
+          <button type="submit" class="danger">Exclude</button>
+        </form>
+        {% elif r['state'] == 'excluded' and r['attempt_count'] < 3 %}
+        <form method="post" action="{{ url_for('requeue_reactivate', requeue_id=r['id']) }}">
+          <button type="submit">Reactivate</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No requeued leads yet. They appear after the daily VICIdial pull (or "Run now").</p>
+{% endif %}
+
+{% endblock %}
