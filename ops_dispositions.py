@@ -18,20 +18,26 @@ SUPPRESS_CODES = ("YPNI",)
 ALL_CODES = RETRY_CODES + SUPPRESS_CODES
 
 
+def _env(name, default=""):
+    """Read OPS_DB_* first, then plain DB_* — so the ops service's variables can
+    be copied in verbatim without renaming."""
+    return os.environ.get("OPS_" + name) or os.environ.get(name) or default
+
+
 def enabled():
     """True when the VICIdial DB connection is configured."""
-    return bool(os.environ.get("OPS_DB_HOST") and os.environ.get("OPS_DB_USER"))
+    return bool(_env("DB_HOST") and _env("DB_USER"))
 
 
 def _connect():
     import pymysql
     from pymysql.cursors import DictCursor
     return pymysql.connect(
-        host=os.environ["OPS_DB_HOST"],
-        port=int(os.environ.get("OPS_DB_PORT", "3306")),
-        user=os.environ["OPS_DB_USER"],
-        password=os.environ.get("OPS_DB_PASSWORD", ""),
-        database=os.environ.get("OPS_DB_NAME", ""),
+        host=_env("DB_HOST"),
+        port=int(_env("DB_PORT", "3306")),
+        user=_env("DB_USER"),
+        password=_env("DB_PASSWORD"),
+        database=_env("DB_NAME"),
         cursorclass=DictCursor,
         connect_timeout=15,
         read_timeout=45,
