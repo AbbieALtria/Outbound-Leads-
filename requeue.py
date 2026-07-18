@@ -59,6 +59,12 @@ def process(conn, dispositions, dry_run=False):
             continue
 
         if status in ops_dispositions.SUPPRESS_CODES:      # YPNI
+            # Only suppress numbers WE generated. Client-owned leads (not in our
+            # app) are the client's campaign — we're just the dialer, so we don't
+            # impose a suppression on their numbers. DNC stays global elsewhere.
+            if phone not in lead_by_phone:
+                summary["unmatched"] += 1
+                continue
             summary["suppressed"] += 1
             if not dry_run:
                 conn.execute(
