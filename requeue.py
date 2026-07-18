@@ -40,9 +40,11 @@ def today_est():
     return datetime.now(EST).strftime("%Y-%m-%d")
 
 
-def process(conn, dispositions, dry_run=False):
-    """Apply a list of {phone, status, called_count} dispositions. Returns a
-    summary. Idempotent: re-running the same day yields the same state."""
+def process(conn, dispositions, day=None, dry_run=False):
+    """Apply a list of {phone, status, called_count} dispositions for the EST
+    day `day` (the redial-batch key). Returns a summary. Idempotent: re-running
+    the same day yields the same state."""
+    day = day or today_est()
     lead_by_phone = {}
     for row in conn.execute("SELECT id, phone FROM leads"):
         p = normalize_phone(row["phone"])
@@ -110,12 +112,13 @@ def process(conn, dispositions, dry_run=False):
         if not dry_run:
             # Keep a manual 'excluded' decision sticky; otherwise set active/exhausted.
             conn.execute(
-                "INSERT INTO requeue_leads (lead_id, last_disposition, attempt_count, state, campaign, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
+                "INSERT INTO requeue_leads (lead_id, last_disposition, attempt_count, state, campaign, batch_date, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(lead_id) DO UPDATE SET last_disposition = excluded.last_disposition, "
-                "attempt_count = excluded.attempt_count, campaign = excluded.campaign, updated_at = excluded.updated_at, "
+                "attempt_count = excluded.attempt_count, campaign = excluded.campaign, "
+                "batch_date = excluded.batch_date, updated_at = excluded.updated_at, "
                 "state = CASE WHEN requeue_leads.state = 'excluded' THEN 'excluded' ELSE excluded.state END",
-                (lead_id, status, count, state, campaign, now),
+                (lead_id, status, count, state, campaign, day, now),
             )
 
     if not dry_run:
@@ -133,7 +136,7 @@ def run(conn, day=None, campaign=None, dry_run=False):
         disps = ops_dispositions.fetch_dispositions(day, campaign=campaign or None)
     except Exception as e:
         return {"error": f"Could not read VICIdial dispositions: {e}"}
-    summary = process(conn, disps, dry_run=dry_run)
+    summary = process(conn, disps, day=day, dry_run=dry_run)
     summary["day"] = day
     summary["campaign"] = campaign or "all"
     summary["dry_run"] = dry_run
@@ -176,3 +179,20 @@ def dashboard_rows(conn, campaign=None):
 def campaigns_in_requeue(conn):
     return [r["campaign"] for r in conn.execute(
         "SELECT DISTINCT campaign FROM requeue_leads WHERE campaign != '' ORDER BY campaign")]
+
+
+def segments(conn):
+    """The active redial pool grouped into upload batches by campaign source +
+    industry + batch date (DATE of updated_at — the day the lead entered/refreshed
+    the requeue). Each row is one VICIdial file the admin downloads and loads into
+    the matching list. Returns [{campaign, industry, batch_date, n}, ...]."""
+    sql = (
+        "SELECT r.campaign AS campaign, "
+        "       COALESCE(NULLIF(TRIM(l.industry), ''), NULLIF(TRIM(l.category), ''), '') AS industry, "
+        "       r.batch_date AS batch_date, COUNT(*) AS n "
+        "FROM requeue_leads r JOIN leads l ON l.id = r.lead_id "
+        "WHERE r.state = 'active' "
+        "GROUP BY r.campaign, industry, r.batch_date "
+        "ORDER BY r.batch_date DESC, r.campaign, industry"
+    )
+    return [dict(x) for x in conn.execute(sql)]

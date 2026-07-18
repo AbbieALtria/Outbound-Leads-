@@ -94,3 +94,31 @@ def list_campaigns():
             conn.close()
     except Exception:
         return []
+
+
+def fetch_callbacks(campaign=None):
+    """Pending scheduled callbacks straight from VICIdial's own callback engine
+    (vicidial_callback), which owns the timing. Read-only, informational — we
+    don't redial these ourselves; the dialer re-serves them at callback_time.
+    Returns [{lead_id, campaign, callback_time, status, agent, recipient,
+    comments, phone}, ...] ordered by soonest due. Raises on connection error."""
+    sql = (
+        "SELECT vc.lead_id, vc.campaign_id AS campaign, vc.callback_time, "
+        "       vc.status, vc.user AS agent, vc.recipient, vc.comments, "
+        "       vl.phone_number AS phone "
+        "FROM vicidial_callback vc "
+        "LEFT JOIN vicidial_list vl ON vl.lead_id = vc.lead_id "
+        "WHERE vc.status IN ('ACTIVE', 'LIVE')"
+    )
+    params = []
+    if campaign:
+        sql += " AND vc.campaign_id = %s"
+        params.append(campaign)
+    sql += " ORDER BY vc.callback_time ASC LIMIT 500"
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return list(cur.fetchall())
+    finally:
+        conn.close()

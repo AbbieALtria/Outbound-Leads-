@@ -335,6 +335,7 @@ CREATE TABLE IF NOT EXISTS requeue_leads (
     attempt_count INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'active',     -- active | exhausted | excluded
     campaign TEXT NOT NULL DEFAULT '',        -- VICIdial campaign_id
+    batch_date TEXT NOT NULL DEFAULT '',      -- EST disposition day (YYYY-MM-DD), the redial-batch key
     updated_at TEXT NOT NULL,
     UNIQUE(lead_id)
 );
@@ -369,6 +370,7 @@ CAMPAIGN_EXTRA_COLUMNS = {
 # Extra columns on requeue_leads added after first release.
 REQUEUE_EXTRA_COLUMNS = {
     "campaign": "TEXT NOT NULL DEFAULT ''",   # VICIdial campaign_id the disposition came from
+    "batch_date": "TEXT NOT NULL DEFAULT ''", # EST disposition day — the redial-batch key
 }
 
 # Market types a campaign can target.

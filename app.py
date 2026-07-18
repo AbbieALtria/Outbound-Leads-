@@ -13,7 +13,7 @@ import json
 import os
 import re
 import threading
-from datetime import date
+from datetime import date, datetime
 
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
@@ -223,7 +223,19 @@ def lead_filters(args):
         where.append("market_type = ?")
         params.append(args["market_type"])
     if args.get("requeue") == "active":
-        where.append("id IN (SELECT lead_id FROM requeue_leads WHERE state = 'active')")
+        # Segment the redial pool by campaign source and batch date (both live on
+        # requeue_leads) so the admin can download one VICIdial file per campaign/
+        # date/industry. industry is filtered on the leads table above.
+        sub = "SELECT lead_id FROM requeue_leads WHERE state = 'active'"
+        subp = []
+        if args.get("campaign"):
+            sub += " AND campaign = ?"
+            subp.append(args["campaign"])
+        if args.get("rq_date"):
+            sub += " AND batch_date = ?"
+            subp.append(args["rq_date"])
+        where.append(f"id IN ({sub})")
+        params.extend(subp)
     if args.get("q"):
         where.append("(business_name LIKE ? OR phone LIKE ?)")
         like = f"%{args['q']}%"
@@ -490,7 +502,15 @@ def export_vicidial():
             "Category": lead["category"],
             "URL": lead["maps_url"],
         })
-    name = f"vicidial_{request.args.get('date') or 'all'}.csv"
+    if request.args.get("requeue") == "active":
+        parts = ["requeue"]
+        for k in ("campaign", "industry", "rq_date"):
+            v = request.args.get(k)
+            if v:
+                parts.append(re.sub(r"[^\w-]", "", v))
+        name = "vicidial_" + "_".join(parts) + ".csv"
+    else:
+        name = f"vicidial_{request.args.get('date') or 'all'}.csv"
     return app.response_class(
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={name}"},
@@ -539,6 +559,7 @@ def requeue_page():
         retry_codes=", ".join(ops_dispositions.RETRY_CODES),
         campaigns=campaign_ids, filter_campaign=filter_campaign,
         today=requeue.today_est(),
+        segments=requeue.segments(conn),
     )
 
 
@@ -566,13 +587,49 @@ def requeue_exclude(requeue_id):
 @app.route("/requeue/<int:requeue_id>/reactivate", methods=["POST"])
 def requeue_reactivate(requeue_id):
     conn = get_db()
-    # Only re-activate if still under the cap.
-    row = conn.execute("SELECT attempt_count FROM requeue_leads WHERE id=?", (requeue_id,)).fetchone()
-    if row and row["attempt_count"] < requeue.CAP:
+    # Only re-activate if still under the cap (callbacks get the higher cap).
+    row = conn.execute(
+        "SELECT attempt_count, last_disposition FROM requeue_leads WHERE id=?",
+        (requeue_id,)).fetchone()
+    if row and row["attempt_count"] < requeue._cap_for((row["last_disposition"] or "").strip().upper()):
         conn.execute("UPDATE requeue_leads SET state='active', updated_at=? WHERE id=?",
                      (db.now_iso(), requeue_id))
         conn.commit()
     return redirect(url_for("requeue_page"))
+
+
+@app.route("/requeue/callbacks")
+def requeue_callbacks():
+    """Read-only view of VICIdial's own scheduled callbacks (vicidial_callback).
+    Informational: the dialer re-serves these at callback_time — we don't. Shows
+    who's owed a call and when, matched to our business names where possible."""
+    conn = get_db()
+    filter_campaign = request.args.get("campaign", "").strip()
+    rows, error = [], None
+    if ops_dispositions.enabled():
+        try:
+            raw = ops_dispositions.fetch_callbacks(campaign=filter_campaign or None)
+        except Exception as e:
+            raw, error = [], str(e)
+        biz = {}
+        for r in conn.execute("SELECT business_name, phone FROM leads"):
+            p = normalize_phone(r["phone"])
+            if p:
+                biz[p] = r["business_name"]
+        now_est = datetime.now(requeue.EST).replace(tzinfo=None)
+        for c in raw:
+            d = dict(c)
+            d["business_name"] = biz.get(normalize_phone(c.get("phone")), "")
+            cbt = c.get("callback_time")
+            d["due"] = bool(cbt and not isinstance(cbt, str) and cbt <= now_est)
+            rows.append(d)
+    vici_campaigns = ops_dispositions.list_campaigns() if ops_dispositions.enabled() else []
+    return render_template(
+        "callbacks.html", rows=rows, error=error,
+        ops_connected=ops_dispositions.enabled(),
+        campaigns=[c["campaign_id"] for c in vici_campaigns],
+        filter_campaign=filter_campaign,
+    )
 
 
 # ---------------------------------------------------------------- DNC suppression

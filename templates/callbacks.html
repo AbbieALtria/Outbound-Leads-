@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Pending Callbacks — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="toolbar">
+  <div class="pull-controls">
+    <strong>Pending callbacks</strong>
+    <span class="dim small">Scheduled callbacks straight from VICIdial — the dialer re-serves these at the promised time. Read-only; requeue doesn't redial them.</span>
+    <a class="button" href="{{ url_for('requeue_page') }}" style="margin-left:auto;">← Requeue</a>
+  </div>
+  <div class="pull-controls" style="margin-top:8px;">
+    <form method="get" action="{{ url_for('requeue_callbacks') }}" class="inline-form">
+      <label class="dim small">Campaign
+        <select name="campaign" onchange="this.form.submit()">
+          <option value="">All campaigns</option>
+          {% for c in campaigns %}<option value="{{ c }}" {{ 'selected' if c == filter_campaign }}>{{ c }}</option>{% endfor %}
+        </select>
+      </label>
+      <noscript><button type="submit" class="button">Filter</button></noscript>
+    </form>
+    <span class="dim small">{{ rows|length }} pending</span>
+  </div>
+  {% if not ops_connected %}
+  <p class="warn" style="margin-top:8px;">VICIdial not connected — set the <code>OPS_DB_*</code> variables in Railway to see callbacks.</p>
+  {% elif error %}
+  <p class="warn" style="margin-top:8px;">Couldn't read callbacks from VICIdial: {{ error }}</p>
+  {% endif %}
+</section>
+
+{% if rows %}
+<div class="table-wrap">
+<table class="leads">
+  <thead>
+    <tr><th>#</th><th>Business</th><th>Phone</th><th>Campaign</th><th>Callback time</th><th>Status</th><th>Agent</th><th>For</th><th>Comments</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="dim">{{ loop.index }}</td>
+      <td>{% if r['business_name'] %}<strong>{{ r['business_name'] }}</strong>{% else %}<span class="dim small">not our lead</span>{% endif %}</td>
+      <td class="nowrap">{% if r['phone'] %}<a href="tel:{{ r['phone'] }}">{{ r['phone'] }}</a>{% else %}<span class="dim">—</span>{% endif %}</td>
+      <td class="nowrap">{{ r['campaign'] }}</td>
+      <td class="nowrap">{{ r['callback_time'] }}
+        {% if r['due'] %}<span class="badge badge-hot">due</span>{% endif %}
+      </td>
+      <td class="nowrap">{{ r['status'] }}</td>
+      <td class="nowrap">{{ r['agent'] or '—' }}</td>
+      <td class="nowrap dim small">{{ 'agent only' if r['recipient'] == 'USERONLY' else 'anyone' }}</td>
+      <td class="dim small">{{ r['comments'] or '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">{% if ops_connected and not error %}No pending callbacks in VICIdial right now.{% else %}Callbacks appear here once VICIdial is reachable.{% endif %}</p>
+{% endif %}
+
+{% endblock %}

@@ -5,7 +5,8 @@
 <section class="toolbar">
   <div class="pull-controls">
     <strong>Requeue</strong>
-    <span class="dim small">Not-reached leads ({{ retry_codes }}) go back into the ready-to-dial pool, capped at 3 dials. YPNI → 90-day suppression.</span>
+    <span class="dim small">Not-reached leads ({{ retry_codes }}) go back into the ready-to-dial pool — capped at 3 dials (callbacks get 5). YPNI → 90-day suppression, YPDNC → permanent DNC.</span>
+    <a class="button" href="{{ url_for('requeue_callbacks') }}" style="margin-left:auto;">Pending callbacks →</a>
   </div>
   <div class="pull-controls" style="margin-top:8px;">
     <span>Active: <strong>{{ active_count }}</strong></span>
@@ -40,6 +41,41 @@
   <p class="dim small" style="margin-top:6px;">Last: {{ last_summary.get('day','') }} — requeued {{ last_summary.get('requeued',0) }}, exhausted {{ last_summary.get('exhausted',0) }}, suppressed {{ last_summary.get('suppressed',0) }}, DNC {{ last_summary.get('dnc',0) }}, unmatched {{ last_summary.get('unmatched',0) }}.</p>
   {% endif %}
 </section>
+
+{% if segments %}
+<section class="toolbar">
+  <div class="pull-controls">
+    <strong>Redial batches</strong>
+    <span class="dim small">The active pool, split by campaign source · industry · batch date. Download each as a VICIdial file and upload it to the matching list.</span>
+  </div>
+  <div class="table-wrap">
+  <table class="leads">
+    <thead>
+      <tr><th>Campaign</th><th>Industry</th><th>Batch date</th><th>Leads</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for s in segments %}
+      <tr>
+        <td class="nowrap">{{ s['campaign'] or '—' }}</td>
+        <td class="nowrap">{{ s['industry'] or '—' }}</td>
+        <td class="nowrap dim small">{{ s['batch_date'] }}</td>
+        <td><strong>{{ s['n'] }}</strong></td>
+        <td class="nowrap actions">
+          {% if s['campaign'] and s['industry'] %}
+          <a class="button primary-outline" href="{{ url_for('export_vicidial', requeue='active', campaign=s['campaign'], industry=s['industry'], rq_date=s['batch_date']) }}">VICIdial CSV</a>
+          {% elif s['campaign'] %}
+          <a class="button primary-outline" href="{{ url_for('export_vicidial', requeue='active', campaign=s['campaign'], rq_date=s['batch_date']) }}">VICIdial CSV</a>
+          {% else %}
+          <a class="button primary-outline" href="{{ url_for('export_vicidial', requeue='active', rq_date=s['batch_date']) }}">VICIdial CSV</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
 
 {% if rows %}
 <div class="table-wrap">
