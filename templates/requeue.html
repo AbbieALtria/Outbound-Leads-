@@ -2,6 +2,21 @@
 {% block title %}Requeue — Lead Gen Platform{% endblock %}
 {% block content %}
 
+{% if alerts %}
+<section class="toolbar" style="border-left:3px solid var(--ok, #2e9e5b);">
+  {% for a in alerts %}
+  <div class="pull-controls" style="{{ '' if loop.first else 'margin-top:6px;' }}">
+    <span>🔔 <strong>{{ a['message'] }}</strong></span>
+    <span class="dim small">{{ a['created_at'][:16].replace('T',' ') }}</span>
+    <form method="post" action="{{ url_for('alert_dismiss', alert_id=a['id']) }}" style="margin-left:auto;">
+      <input type="hidden" name="next" value="{{ url_for('requeue_page') }}">
+      <button type="submit" class="button">Dismiss</button>
+    </form>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
 <section class="toolbar">
   <div class="pull-controls">
     <strong>Requeue</strong>
@@ -45,8 +60,8 @@
 {% if segments %}
 <section class="toolbar">
   <div class="pull-controls">
-    <strong>Redial batches</strong>
-    <span class="dim small">The active pool, split by campaign source · industry · batch date. Download each as a VICIdial file and upload it to the matching list.</span>
+    <strong>Regenerated lists</strong>
+    <span class="dim small">Saved in the system, split by campaign source · industry · date created. Download each as a VICIdial file <em>when you're ready</em> and upload it to the matching list — nothing is sent automatically.</span>
   </div>
   <div class="table-wrap">
   <table class="leads">

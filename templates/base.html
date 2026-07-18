@@ -14,7 +14,7 @@
     <a href="{{ url_for('import_leads') }}" class="{{ 'active' if request.endpoint == 'import_leads' }}">Import Leads</a>
     <a href="{{ url_for('import_call_log') }}" class="{{ 'active' if request.endpoint == 'import_call_log' }}">Call Log</a>
     <a href="{{ url_for('dnc_page') }}" class="{{ 'active' if request.endpoint == 'dnc_page' }}">DNC</a>
-    <a href="{{ url_for('requeue_page') }}" class="{{ 'active' if request.endpoint == 'requeue_page' }}">Requeue</a>
+    <a href="{{ url_for('requeue_page') }}" class="{{ 'active' if request.endpoint == 'requeue_page' }}">Requeue{% if alert_count %} <span class="nav-badge">{{ alert_count }}</span>{% endif %}</a>
     <a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
     {% if current_user and current_user['role'] == 'admin' %}
     <a href="{{ url_for('users_page') }}" class="{{ 'active' if request.endpoint == 'users_page' }}">Users</a>

@@ -86,7 +86,14 @@ def require_login():
 
 @app.context_processor
 def inject_user():
-    return {"current_user": getattr(g, "user", None)}
+    ctx = {"current_user": getattr(g, "user", None), "alert_count": 0}
+    # Show the unseen-alert badge in the nav for signed-in users.
+    if getattr(g, "user", None):
+        try:
+            ctx["alert_count"] = db.unseen_alert_count(get_db())
+        except Exception:
+            pass
+    return ctx
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -566,7 +573,16 @@ def requeue_page():
         campaigns=campaign_ids, filter_campaign=filter_campaign,
         today=requeue.today_est(),
         segments=requeue.segments(conn),
+        alerts=db.unseen_alerts(conn),
     )
+
+
+@app.route("/alerts/<int:alert_id>/dismiss", methods=["POST"])
+def alert_dismiss(alert_id):
+    conn = get_db()
+    db.mark_alert_seen(conn, alert_id)
+    conn.commit()
+    return redirect(request.form.get("next") or url_for("requeue_page"))
 
 
 @app.route("/requeue/run", methods=["POST"])
@@ -578,7 +594,21 @@ def requeue_run():
     day = request.form.get("day", "").strip() or None
     campaign = request.form.get("campaign", "").strip() or None
     summary = run_requeue_now(day=day, campaign=campaign, dry_run=dry)
-    return render_template("requeue_result.html", summary=summary, dry_run=dry)
+    # A real run just SAVES a dated "regenerated" list into the system and raises
+    # an alert — nothing is sent to VICIdial. The admin downloads it when ready.
+    if not dry and "error" not in summary and summary.get("requeued", 0):
+        conn = get_db()
+        db.add_alert(
+            conn,
+            f"New regenerated list ready to upload: {summary['requeued']} leads "
+            f"from {summary.get('day','')}"
+            + (f" ({campaign})" if campaign else "")
+            + f" — suppressed {summary.get('suppressed',0)}, DNC {summary.get('dnc',0)}.",
+            kind="regen_list", link=url_for("requeue_page"),
+        )
+        conn.commit()
+    return render_template("requeue_result.html", summary=summary, dry_run=dry,
+                           day=day or "", campaign=campaign or "")
 
 
 @app.route("/requeue/<int:requeue_id>/exclude", methods=["POST"])

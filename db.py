@@ -348,6 +348,16 @@ CREATE TABLE IF NOT EXISTS suppressed_leads (
     added_at TEXT NOT NULL
 );
 
+-- In-app alerts (e.g. a new regenerated list is ready to upload to VICIdial).
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT '',            -- e.g. 'regen_list'
+    message TEXT NOT NULL,
+    link TEXT NOT NULL DEFAULT '',            -- where to act on it
+    created_at TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS campaigns (
     id INTEGER PRIMARY KEY,
     slug TEXT UNIQUE NOT NULL,
@@ -402,6 +412,27 @@ def set_setting(conn, key, value):
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, str(value)),
     )
+
+
+def add_alert(conn, message, kind="", link=""):
+    conn.execute(
+        "INSERT INTO alerts (kind, message, link, created_at, seen) VALUES (?, ?, ?, ?, 0)",
+        (kind, message, link, now_iso()),
+    )
+
+
+def unseen_alerts(conn):
+    return conn.execute(
+        "SELECT id, kind, message, link, created_at FROM alerts WHERE seen = 0 "
+        "ORDER BY created_at DESC").fetchall()
+
+
+def unseen_alert_count(conn):
+    return conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE seen = 0").fetchone()["n"]
+
+
+def mark_alert_seen(conn, alert_id):
+    conn.execute("UPDATE alerts SET seen = 1 WHERE id = ?", (alert_id,))
 
 
 def init_db(db_path=DB_FILE):
