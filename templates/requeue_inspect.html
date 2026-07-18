@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}VICIdial record inspector — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="toolbar">
+  <div class="pull-controls">
+    <strong>VICIdial record inspector</strong>
+    <span class="dim small">Read-only sample of what the dialer stores for these numbers. Use it to see which fields a client list actually fills — anything blank here can't be pulled into regenerated leads without external enrichment.</span>
+    <a class="button" href="{{ url_for('requeue_page') }}" style="margin-left:auto;">← Requeue</a>
+  </div>
+  <div class="pull-controls" style="margin-top:8px;">
+    <form method="get" action="{{ url_for('requeue_inspect') }}" class="inline-form">
+      <label class="dim small">Date <input type="date" name="day" value="{{ day }}"></label>
+      <label class="dim small">Campaign
+        <select name="campaign">
+          <option value="">All campaigns</option>
+          {% for c in campaigns %}<option value="{{ c }}" {{ 'selected' if c == campaign }}>{{ c }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="button">Inspect</button>
+    </form>
+  </div>
+  {% if not ops_connected %}
+  <p class="warn" style="margin-top:8px;">VICIdial not connected — set the <code>OPS_DB_*</code> variables in Railway.</p>
+  {% elif error %}
+  <p class="warn" style="margin-top:8px;">Couldn't read from VICIdial: {{ error }}</p>
+  {% endif %}
+</section>
+
+{% if fill %}
+<section class="toolbar">
+  <div class="pull-controls"><strong>Field fill rate</strong> <span class="dim small">(non-empty in this sample) — tells us which columns hold real data, e.g. where the business name lives.</span></div>
+  <div class="pull-controls" style="margin-top:6px; flex-wrap:wrap; gap:6px;">
+    {% for col, rate in fill.items() %}
+    <span class="badge {{ 'badge-ok' if rate.split('/')[0]|int > 0 else '' }}">{{ col }}: {{ rate }}</span>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if rows %}
+<div class="table-wrap">
+<table class="leads">
+  <thead>
+    <tr>{% for col in rows[0].keys() %}<th>{{ col }}</th>{% endfor %}</tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>{% for col in rows[0].keys() %}<td class="small">{{ r[col] if r[col] not in (None, '') else '—' }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% elif ops_connected and not error %}
+<p class="empty">No rows for that date/campaign.</p>
+{% endif %}
+
+{% endblock %}

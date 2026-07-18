@@ -98,6 +98,33 @@ def list_campaigns():
         return []
 
 
+def sample_records(day=None, campaign=None, limit=15):
+    """Read a few raw vicidial_list rows (all the fields a client list might fill)
+    so we can SEE what data actually exists for these numbers before deciding how
+    to enrich regenerated leads. Read-only. Raises on connection error."""
+    cols = ("phone_number, title, first_name, last_name, address1, address2, "
+            "city, state, postal_code, country_code, email, comments, "
+            "vendor_lead_code, source_id, called_count, status")
+    sql = (f"SELECT {cols} FROM vicidial_list vl "
+           "JOIN vicidial_lists vls ON vl.list_id = vls.list_id WHERE 1=1")
+    params = []
+    if day:
+        sql += " AND DATE(vl.last_local_call_time) = %s"
+        params.append(day)
+    if campaign:
+        sql += " AND vls.campaign_id = %s"
+        params.append(campaign)
+    sql += " LIMIT %s"
+    params.append(int(limit))
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return list(cur.fetchall())
+    finally:
+        conn.close()
+
+
 def fetch_callbacks(campaign=None):
     """Pending scheduled callbacks straight from VICIdial's own callback engine
     (vicidial_callback), which owns the timing. Read-only, informational — we

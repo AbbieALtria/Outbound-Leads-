@@ -634,6 +634,33 @@ def requeue_reactivate(requeue_id):
     return redirect(url_for("requeue_page"))
 
 
+@app.route("/requeue/inspect")
+def requeue_inspect():
+    """Read-only look at what a client's VICIdial list actually stores for these
+    numbers — so we know which fields to map into regenerated leads (and what's
+    simply missing and would need external enrichment)."""
+    day = request.args.get("day", "").strip() or None
+    campaign = request.args.get("campaign", "").strip() or None
+    rows, error, fill = [], None, {}
+    if ops_dispositions.enabled():
+        try:
+            rows = [dict(r) for r in ops_dispositions.sample_records(day=day, campaign=campaign)]
+        except Exception as e:
+            error = str(e)
+        # For each column, what fraction of the sample is non-empty?
+        if rows:
+            for col in rows[0].keys():
+                n = sum(1 for r in rows if str(r.get(col) or "").strip())
+                fill[col] = f"{n}/{len(rows)}"
+    vici_campaigns = ops_dispositions.list_campaigns() if ops_dispositions.enabled() else []
+    return render_template(
+        "requeue_inspect.html", rows=rows, error=error, fill=fill,
+        ops_connected=ops_dispositions.enabled(),
+        campaigns=[c["campaign_id"] for c in vici_campaigns],
+        day=day or requeue.today_est(), campaign=campaign or "",
+    )
+
+
 @app.route("/requeue/callbacks")
 def requeue_callbacks():
     """Read-only view of VICIdial's own scheduled callbacks (vicidial_callback).

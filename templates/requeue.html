@@ -21,7 +21,8 @@
   <div class="pull-controls">
     <strong>Requeue</strong>
     <span class="dim small">Not-reached leads ({{ retry_codes }}) go back into the ready-to-dial pool — capped at 3 dials (callbacks get 5). YPNI → 90-day suppression, YPDNC → permanent DNC.</span>
-    <a class="button" href="{{ url_for('requeue_callbacks') }}" style="margin-left:auto;">Pending callbacks →</a>
+    <a class="button" href="{{ url_for('requeue_inspect') }}" style="margin-left:auto;">Inspect VICIdial data →</a>
+    <a class="button" href="{{ url_for('requeue_callbacks') }}">Pending callbacks →</a>
   </div>
   <div class="pull-controls" style="margin-top:8px;">
     <span>Active: <strong>{{ active_count }}</strong></span>
