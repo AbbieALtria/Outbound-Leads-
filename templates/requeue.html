@@ -55,7 +55,7 @@
       <td class="nowrap"><a href="tel:{{ r['phone'] }}">{{ r['phone'] }}</a></td>
       <td class="nowrap">{{ r['city'] }}{% if r['lead_state'] %}, {{ r['lead_state'] }}{% endif %}</td>
       <td class="nowrap">{{ r['last_disposition'] }}</td>
-      <td>{{ r['attempt_count'] }} / 3</td>
+      <td>{{ r['attempt_count'] }} / {{ r['cap'] }}</td>
       <td>
         {% if r['state'] == 'active' %}<span class="badge badge-ok">active</span>
         {% elif r['state'] == 'exhausted' %}<span class="badge badge-hot">exhausted</span>
@@ -68,7 +68,7 @@
               onsubmit="return confirm('Exclude {{ r['business_name'] }} from the ready-to-dial pool?')">
           <button type="submit" class="danger">Exclude</button>
         </form>
-        {% elif r['state'] == 'excluded' and r['attempt_count'] < 3 %}
+        {% elif r['state'] == 'excluded' and r['attempt_count'] < r['cap'] %}
         <form method="post" action="{{ url_for('requeue_reactivate', requeue_id=r['id']) }}">
           <button type="submit">Reactivate</button>
         </form>

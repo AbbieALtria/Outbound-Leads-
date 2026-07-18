@@ -15,6 +15,11 @@ import os
 # NA/AB/PDROP/ADC are the dialer's other not-connected outcomes (no answer,
 # abandoned, predictive drop, auto-dial) — all "nobody was reached", so redial.
 RETRY_CODES = ("YPVM", "YPCBCK", "YPNA", "INCALL", "DROP", "NA", "AB", "PDROP", "ADC")
+# Scheduled callbacks (a subset of retry): the customer asked to be called back.
+# They get a higher dial cap than other retries — a requested callback is
+# engagement, so we don't drop them after the usual 3 tries. VICIdial's own
+# callback engine owns the *timing* (callback_time); here we just keep them alive.
+CALLBACK_CODES = ("YPCBCK",)
 # Reached and declined -> time-boxed suppression, not requeue.
 SUPPRESS_CODES = ("YPNI",)
 # Explicit do-not-call -> permanent DNC (legal), global across every campaign.

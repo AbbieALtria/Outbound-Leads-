@@ -21,7 +21,13 @@ import ops_dispositions
 from dialer_import import normalize_phone
 
 CAP = 3                      # total dials (called_count) allowed before exhausted
+CALLBACK_CAP = 5             # callbacks get more room — the customer asked us to call
 COOLDOWN_DAYS = 90          # YPNI suppression window
+
+
+def _cap_for(status):
+    """Dial cap for a disposition — callbacks get the higher CALLBACK_CAP."""
+    return CALLBACK_CAP if status in ops_dispositions.CALLBACK_CODES else CAP
 
 try:
     from zoneinfo import ZoneInfo
@@ -98,7 +104,7 @@ def process(conn, dispositions, dry_run=False):
             summary["unmatched"] += 1          # dialed number we didn't generate
             continue
 
-        state = "exhausted" if count >= CAP else "active"
+        state = "exhausted" if count >= _cap_for(status) else "active"
         campaign = (d.get("campaign") or "").strip()
         summary["exhausted" if state == "exhausted" else "requeued"] += 1
         if not dry_run:
@@ -159,7 +165,12 @@ def dashboard_rows(conn, campaign=None):
         sql += "WHERE r.campaign = ? "
         params.append(campaign)
     sql += "ORDER BY CASE r.state WHEN 'active' THEN 0 WHEN 'exhausted' THEN 1 ELSE 2 END, r.updated_at DESC"
-    return conn.execute(sql, params).fetchall()
+    rows = []
+    for r in conn.execute(sql, params):
+        d = dict(r)
+        d["cap"] = _cap_for((d.get("last_disposition") or "").strip().upper())
+        rows.append(d)
+    return rows
 
 
 def campaigns_in_requeue(conn):
