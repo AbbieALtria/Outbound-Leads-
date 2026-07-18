@@ -13,6 +13,7 @@ Decisions are written to requeue_leads / suppressed_leads so the export stays
 fast and the dashboard has state to show.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import db
@@ -37,20 +38,41 @@ def _ensure_lead(conn, d, phone10, batch_date):
     re-serve it. Tagged lead_source='vicidial' so it stays separate from
     app-generated leads (and out of the lead-gen dashboard, which is run-scoped)."""
     stored = format_phone(phone10)
-    row = conn.execute("SELECT id FROM leads WHERE phone = ?", (stored,)).fetchone()
-    if row:
-        return row["id"]
+    # This client loads the business name into vicidial_list.comments and the full
+    # address into address1 (the standard name fields are empty) — confirmed via
+    # the VICIdial inspector. Fall back to a contact name / phone for other layouts.
     fn = (d.get("first_name") or "").strip()
     ln = (d.get("last_name") or "").strip()
-    name = (fn + " " + ln).strip() or f"VICIdial {phone10}"
+    comments = (d.get("comments") or "").strip()
+    name = comments or (fn + " " + ln).strip() or f"VICIdial {phone10}"
+    address = (d.get("address1") or "").strip()
+    city = (d.get("city") or "").strip()
+    region = (d.get("region") or "").strip()
+    postcode = (d.get("postal_code") or "").strip()
+    if not postcode and address:                      # zip is inside the address line
+        m = re.search(r"\b(\d{5})(?:-\d{4})?\b", address)
+        if m:
+            postcode = m.group(1)
+    email = (d.get("email") or "").strip()
+
+    row = conn.execute(
+        "SELECT id, business_name, lead_source FROM leads WHERE phone = ?", (stored,)).fetchone()
+    if row:
+        # Backfill a VICIdial-registered lead that was saved thin before this
+        # mapping existed (never touch app-generated leads).
+        if row["lead_source"] == "vicidial" and (
+                not row["business_name"] or row["business_name"].startswith("VICIdial ")):
+            conn.execute(
+                "UPDATE leads SET business_name=?, address=?, city=?, state=?, postcode=?, email=? "
+                "WHERE id=?",
+                (name, address, city, region, postcode, email, row["id"]))
+        return row["id"]
     status = "dnc" if dnc.is_suppressed(conn, phone10) else "new"
     conn.execute(
         "INSERT INTO leads (phone, business_name, address, city, state, postcode, email, "
         "pulled_date, lead_source, market_type, status) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'vicidial', 'b2b', ?)",
-        (stored, name, (d.get("address1") or "").strip(), (d.get("city") or "").strip(),
-         (d.get("region") or "").strip(), (d.get("postal_code") or "").strip(),
-         (d.get("email") or "").strip(), batch_date, status),
+        (stored, name, address, city, region, postcode, email, batch_date, status),
     )
     return conn.execute("SELECT id FROM leads WHERE phone = ?", (stored,)).fetchone()["id"]
 
