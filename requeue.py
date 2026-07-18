@@ -16,6 +16,7 @@ fast and the dashboard has state to show.
 from datetime import datetime, timedelta, timezone
 
 import db
+import dnc
 import ops_dispositions
 from dialer_import import normalize_phone
 
@@ -43,7 +44,7 @@ def process(conn, dispositions, dry_run=False):
             lead_by_phone[p] = row["id"]
 
     summary = {"processed": 0, "requeued": 0, "exhausted": 0,
-               "suppressed": 0, "unmatched": 0}
+               "suppressed": 0, "dnc": 0, "unmatched": 0}
     now = db.now_iso()
     cooldown = (datetime.now(EST) + timedelta(days=COOLDOWN_DAYS)).isoformat(timespec="seconds")
 
@@ -56,6 +57,22 @@ def process(conn, dispositions, dry_run=False):
         except (TypeError, ValueError):
             count = 0
         if not phone:
+            continue
+
+        if status in ops_dispositions.DNC_CODES:           # YPDNC - hard do-not-call
+            # A do-not-call is legal and permanent, so unlike YPNI it's global:
+            # add the number to the DNC list regardless of whether it's our lead.
+            # If it IS ours, flag the lead so the export drops it right away.
+            summary["dnc"] += 1
+            if not dry_run:
+                dnc.add_numbers(conn, [phone], source="vicidial",
+                                reason=f"{status} - do not call")
+                lead_id = lead_by_phone.get(phone)
+                if lead_id:
+                    conn.execute(
+                        "UPDATE leads SET status = 'dnc', status_updated_at = ? WHERE id = ?",
+                        (now, lead_id),
+                    )
             continue
 
         if status in ops_dispositions.SUPPRESS_CODES:      # YPNI

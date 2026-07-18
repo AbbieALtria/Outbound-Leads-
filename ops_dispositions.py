@@ -12,10 +12,14 @@ Connection comes from env vars set in Railway (never in code/DB/chat):
 import os
 
 # Not-reached -> requeue for redial (capped by called_count).
-RETRY_CODES = ("YPVM", "YPCBCK", "YPNA", "INCALL", "DROP")
+# NA/AB/PDROP/ADC are the dialer's other not-connected outcomes (no answer,
+# abandoned, predictive drop, auto-dial) — all "nobody was reached", so redial.
+RETRY_CODES = ("YPVM", "YPCBCK", "YPNA", "INCALL", "DROP", "NA", "AB", "PDROP", "ADC")
 # Reached and declined -> time-boxed suppression, not requeue.
 SUPPRESS_CODES = ("YPNI",)
-ALL_CODES = RETRY_CODES + SUPPRESS_CODES
+# Explicit do-not-call -> permanent DNC (legal), global across every campaign.
+DNC_CODES = ("YPDNC",)
+ALL_CODES = RETRY_CODES + SUPPRESS_CODES + DNC_CODES
 
 
 def _env(name, default=""):
