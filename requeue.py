@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 import db
 import dnc
 import ops_dispositions
-from dialer_import import normalize_phone
+from dialer_import import normalize_phone, format_phone
 
 CAP = 3                      # total dials (called_count) allowed before exhausted
 CALLBACK_CAP = 5             # callbacks get more room — the customer asked us to call
@@ -28,6 +28,31 @@ COOLDOWN_DAYS = 90          # YPNI suppression window
 def _cap_for(status):
     """Dial cap for a disposition — callbacks get the higher CALLBACK_CAP."""
     return CALLBACK_CAP if status in ops_dispositions.CALLBACK_CODES else CAP
+
+
+def _ensure_lead(conn, d, phone10, batch_date):
+    """Return the leads.id for this number, creating it from VICIdial's own record
+    if we didn't generate it. Source-agnostic requeue: a not-reached number that
+    isn't ours still needs a lead row so the cleaned/segmented dial export can
+    re-serve it. Tagged lead_source='vicidial' so it stays separate from
+    app-generated leads (and out of the lead-gen dashboard, which is run-scoped)."""
+    stored = format_phone(phone10)
+    row = conn.execute("SELECT id FROM leads WHERE phone = ?", (stored,)).fetchone()
+    if row:
+        return row["id"]
+    fn = (d.get("first_name") or "").strip()
+    ln = (d.get("last_name") or "").strip()
+    name = (fn + " " + ln).strip() or f"VICIdial {phone10}"
+    status = "dnc" if dnc.is_suppressed(conn, phone10) else "new"
+    conn.execute(
+        "INSERT INTO leads (phone, business_name, address, city, state, postcode, email, "
+        "pulled_date, lead_source, market_type, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'vicidial', 'b2b', ?)",
+        (stored, name, (d.get("address1") or "").strip(), (d.get("city") or "").strip(),
+         (d.get("region") or "").strip(), (d.get("postal_code") or "").strip(),
+         (d.get("email") or "").strip(), batch_date, status),
+    )
+    return conn.execute("SELECT id FROM leads WHERE phone = ?", (stored,)).fetchone()["id"]
 
 try:
     from zoneinfo import ZoneInfo
@@ -84,12 +109,9 @@ def process(conn, dispositions, day=None, dry_run=False):
             continue
 
         if status in ops_dispositions.SUPPRESS_CODES:      # YPNI
-            # Only suppress numbers WE generated. Client-owned leads (not in our
-            # app) are the client's campaign — we're just the dialer, so we don't
-            # impose a suppression on their numbers. DNC stays global elsewhere.
-            if phone not in lead_by_phone:
-                summary["unmatched"] += 1
-                continue
+            # Source-agnostic: a 'not interested' number gets the 90-day cooldown
+            # regardless of where the lead came from. suppressed_leads is keyed by
+            # phone, so the dial export drops it whether or not it's our lead.
             summary["suppressed"] += 1
             if not dry_run:
                 conn.execute(
@@ -101,15 +123,15 @@ def process(conn, dispositions, day=None, dry_run=False):
 
         if status not in ops_dispositions.RETRY_CODES:
             continue
-        lead_id = lead_by_phone.get(phone)
-        if not lead_id:
-            summary["unmatched"] += 1          # dialed number we didn't generate
-            continue
 
         state = "exhausted" if count >= _cap_for(status) else "active"
         campaign = (d.get("campaign") or "").strip()
         summary["exhausted" if state == "exhausted" else "requeued"] += 1
         if not dry_run:
+            # Source-agnostic: if we didn't generate this number, register it from
+            # VICIdial's own record so the segmented dial export can re-serve it.
+            lead_id = lead_by_phone.get(phone) or _ensure_lead(conn, d, phone, day)
+            lead_by_phone[phone] = lead_id
             # Keep a manual 'excluded' decision sticky; otherwise set active/exhausted.
             conn.execute(
                 "INSERT INTO requeue_leads (lead_id, last_disposition, attempt_count, state, campaign, batch_date, updated_at) "

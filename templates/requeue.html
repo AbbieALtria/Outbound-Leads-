@@ -38,7 +38,7 @@
   <p class="warn" style="margin-top:8px;">VICIdial not connected — set <code>OPS_DB_HOST / OPS_DB_PORT / OPS_DB_NAME / OPS_DB_USER / OPS_DB_PASSWORD</code> in Railway → Variables to enable the daily pull.</p>
   {% endif %}
   {% if last_summary and 'error' not in last_summary %}
-  <p class="dim small" style="margin-top:6px;">Last: {{ last_summary.get('day','') }} — requeued {{ last_summary.get('requeued',0) }}, exhausted {{ last_summary.get('exhausted',0) }}, suppressed {{ last_summary.get('suppressed',0) }}, DNC {{ last_summary.get('dnc',0) }}, unmatched {{ last_summary.get('unmatched',0) }}.</p>
+  <p class="dim small" style="margin-top:6px;">Last: {{ last_summary.get('day','') }} — requeued {{ last_summary.get('requeued',0) }}, exhausted {{ last_summary.get('exhausted',0) }}, suppressed {{ last_summary.get('suppressed',0) }}, DNC {{ last_summary.get('dnc',0) }} (of {{ last_summary.get('processed',0) }} processed).</p>
   {% endif %}
 </section>
 

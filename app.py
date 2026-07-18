@@ -236,6 +236,12 @@ def lead_filters(args):
             subp.append(args["rq_date"])
         where.append(f"id IN ({sub})")
         params.extend(subp)
+    # Numbers registered from VICIdial dispositions (source-agnostic requeue) are
+    # dialable but aren't lead-gen leads — keep them out of the lead-gen lists
+    # (Dashboard/History) unless we're building the requeue export or explicitly
+    # filtering by source.
+    if args.get("requeue") != "active" and not args.get("lead_source"):
+        where.append("lead_source != 'vicidial'")
     if args.get("q"):
         where.append("(business_name LIKE ? OR phone LIKE ?)")
         like = f"%{args['q']}%"

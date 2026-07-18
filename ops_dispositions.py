@@ -60,7 +60,9 @@ def fetch_dispositions(day, campaign=None):
     placeholders = ",".join(["%s"] * len(ALL_CODES))
     sql = (
         "SELECT vl.phone_number AS phone, vl.status, vl.called_count, "
-        "       vls.campaign_id AS campaign "
+        "       vls.campaign_id AS campaign, "
+        "       vl.first_name, vl.last_name, vl.address1, vl.city, "
+        "       vl.state AS region, vl.postal_code, vl.email "
         "FROM vicidial_list vl "
         "JOIN vicidial_lists vls ON vl.list_id = vls.list_id "
         f"WHERE vl.status IN ({placeholders}) AND DATE(vl.last_local_call_time) = %s"
