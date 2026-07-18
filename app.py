@@ -499,12 +499,12 @@ def export_vicidial():
 
 # ---------------------------------------------------------------- requeue
 
-def run_requeue_now(dry_run=False):
-    """Pull today's VICIdial dispositions and requeue/suppress. Returns a summary.
+def run_requeue_now(day=None, campaign=None, dry_run=False):
+    """Pull a day's VICIdial dispositions and requeue/suppress. Returns a summary.
     Safe to call from the scheduler or the 'Run now' button."""
     conn = db.connect()
     try:
-        summary = requeue.run(conn, dry_run=dry_run)
+        summary = requeue.run(conn, day=day, campaign=campaign, dry_run=dry_run)
         if not dry_run and "error" not in summary:
             db.set_setting(conn, "requeue_last_run", db.now_iso())
             db.set_setting(conn, "requeue_last_summary", json.dumps(summary))
@@ -524,8 +524,12 @@ def requeue_page():
         last_summary = None
     active = conn.execute(
         "SELECT COUNT(*) AS n FROM requeue_leads WHERE state='active'").fetchone()["n"]
+    filter_campaign = request.args.get("campaign", "").strip()
+    # Campaign choices: live VICIdial campaigns if reachable, else whatever we've seen.
+    vici_campaigns = ops_dispositions.list_campaigns() if ops_dispositions.enabled() else []
+    campaign_ids = [c["campaign_id"] for c in vici_campaigns] or requeue.campaigns_in_requeue(conn)
     return render_template(
-        "requeue.html", rows=requeue.dashboard_rows(conn),
+        "requeue.html", rows=requeue.dashboard_rows(conn, campaign=filter_campaign or None),
         active_count=active,
         suppressed_count=conn.execute("SELECT COUNT(*) AS n FROM suppressed_leads").fetchone()["n"],
         last_run=db.get_setting(conn, "requeue_last_run", ""),
@@ -533,6 +537,8 @@ def requeue_page():
         run_time=db.get_setting(conn, "requeue_run_time", "23:30"),
         ops_connected=ops_dispositions.enabled(),
         retry_codes=", ".join(ops_dispositions.RETRY_CODES),
+        campaigns=campaign_ids, filter_campaign=filter_campaign,
+        today=requeue.today_est(),
     )
 
 
@@ -542,7 +548,9 @@ def requeue_run():
     if guard:
         return guard
     dry = request.form.get("dry_run") == "1"
-    summary = run_requeue_now(dry_run=dry)
+    day = request.form.get("day", "").strip() or None
+    campaign = request.form.get("campaign", "").strip() or None
+    summary = run_requeue_now(day=day, campaign=campaign, dry_run=dry)
     return render_template("requeue_result.html", summary=summary, dry_run=dry)
 
 

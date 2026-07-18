@@ -13,13 +13,25 @@
     <span>Suppressed (YPNI): <strong>{{ suppressed_count }}</strong></span>
     <span class="dim">·</span>
     <span class="dim small">Daily run {{ run_time }} EST · last run: {{ last_run[:16].replace('T',' ') if last_run else 'never' }}</span>
-    <form method="post" action="{{ url_for('requeue_run') }}" style="margin-left:auto;">
+  </div>
+  <div class="pull-controls" style="margin-top:8px;">
+    <form method="post" action="{{ url_for('requeue_run') }}" class="inline-form">
+      <label class="dim small">Date
+        <input type="date" name="day" value="{{ today }}">
+      </label>
+      <label class="dim small">Campaign
+        <select name="campaign">
+          <option value="">All campaigns</option>
+          {% for c in campaigns %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </label>
       <button type="submit" class="button" name="dry_run" value="1"
         {{ 'disabled' if not ops_connected }}>Dry run</button>
       <button type="submit" class="primary" {{ 'disabled' if not ops_connected }}>Run now</button>
     </form>
     <a class="button primary-outline" href="{{ url_for('export_vicidial', requeue='active') }}"
-       title="This requeue batch, VICIdial format (DNC/invalid/closed/suppressed excluded)">VICIdial CSV (requeue)</a>
+       title="This requeue batch, VICIdial format (DNC/invalid/closed/suppressed excluded)"
+       style="margin-left:auto;">VICIdial CSV (requeue)</a>
   </div>
   {% if not ops_connected %}
   <p class="warn" style="margin-top:8px;">VICIdial not connected — set <code>OPS_DB_HOST / OPS_DB_PORT / OPS_DB_NAME / OPS_DB_USER / OPS_DB_PASSWORD</code> in Railway → Variables to enable the daily pull.</p>

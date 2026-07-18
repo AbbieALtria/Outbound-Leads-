@@ -82,16 +82,17 @@ def process(conn, dispositions, dry_run=False):
             continue
 
         state = "exhausted" if count >= CAP else "active"
+        campaign = (d.get("campaign") or "").strip()
         summary["exhausted" if state == "exhausted" else "requeued"] += 1
         if not dry_run:
             # Keep a manual 'excluded' decision sticky; otherwise set active/exhausted.
             conn.execute(
-                "INSERT INTO requeue_leads (lead_id, last_disposition, attempt_count, state, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO requeue_leads (lead_id, last_disposition, attempt_count, state, campaign, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(lead_id) DO UPDATE SET last_disposition = excluded.last_disposition, "
-                "attempt_count = excluded.attempt_count, updated_at = excluded.updated_at, "
+                "attempt_count = excluded.attempt_count, campaign = excluded.campaign, updated_at = excluded.updated_at, "
                 "state = CASE WHEN requeue_leads.state = 'excluded' THEN 'excluded' ELSE excluded.state END",
-                (lead_id, status, count, state, now),
+                (lead_id, status, count, state, campaign, now),
             )
 
     if not dry_run:
@@ -99,17 +100,19 @@ def process(conn, dispositions, dry_run=False):
     return summary
 
 
-def run(conn, day=None, dry_run=False):
-    """Fetch a day's dispositions from VICIdial and process them."""
+def run(conn, day=None, campaign=None, dry_run=False):
+    """Fetch a day's dispositions from VICIdial (optionally one campaign) and
+    process them."""
     if not ops_dispositions.enabled():
         return {"error": "VICIdial connection not configured (set OPS_DB_* env vars)."}
     day = day or today_est()
     try:
-        disps = ops_dispositions.fetch_dispositions(day)
+        disps = ops_dispositions.fetch_dispositions(day, campaign=campaign or None)
     except Exception as e:
         return {"error": f"Could not read VICIdial dispositions: {e}"}
     summary = process(conn, disps, dry_run=dry_run)
     summary["day"] = day
+    summary["campaign"] = campaign or "all"
     summary["dry_run"] = dry_run
     return summary
 
@@ -128,10 +131,20 @@ def suppressed_phones(conn):
         "SELECT phone FROM suppressed_leads WHERE cooldown_until > ?", (db.now_iso(),))}
 
 
-def dashboard_rows(conn):
-    return conn.execute(
-        "SELECT r.id, r.lead_id, r.last_disposition, r.attempt_count, r.state, r.updated_at, "
+def dashboard_rows(conn, campaign=None):
+    sql = (
+        "SELECT r.id, r.lead_id, r.last_disposition, r.attempt_count, r.state, r.campaign, r.updated_at, "
         "l.business_name, l.phone, l.city, l.state AS lead_state "
         "FROM requeue_leads r JOIN leads l ON l.id = r.lead_id "
-        "ORDER BY CASE r.state WHEN 'active' THEN 0 WHEN 'exhausted' THEN 1 ELSE 2 END, r.updated_at DESC"
-    ).fetchall()
+    )
+    params = []
+    if campaign:
+        sql += "WHERE r.campaign = ? "
+        params.append(campaign)
+    sql += "ORDER BY CASE r.state WHEN 'active' THEN 0 WHEN 'exhausted' THEN 1 ELSE 2 END, r.updated_at DESC"
+    return conn.execute(sql, params).fetchall()
+
+
+def campaigns_in_requeue(conn):
+    return [r["campaign"] for r in conn.execute(
+        "SELECT DISTINCT campaign FROM requeue_leads WHERE campaign != '' ORDER BY campaign")]

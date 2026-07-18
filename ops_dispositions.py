@@ -44,19 +44,44 @@ def _connect():
     )
 
 
-def fetch_dispositions(day):
-    """day: 'YYYY-MM-DD' (EST). Returns [{phone, status, called_count}, ...] for
-    leads whose latest disposition that day is a retry/suppress code. Read-only."""
+def fetch_dispositions(day, campaign=None):
+    """day: 'YYYY-MM-DD' (EST). Optional campaign = VICIdial campaign_id.
+    Returns [{phone, status, called_count, campaign}, ...] for leads whose latest
+    disposition that day is a retry/suppress code. Read-only."""
     placeholders = ",".join(["%s"] * len(ALL_CODES))
     sql = (
-        "SELECT phone_number AS phone, status, called_count "
-        "FROM vicidial_list "
-        f"WHERE status IN ({placeholders}) AND DATE(last_local_call_time) = %s"
+        "SELECT vl.phone_number AS phone, vl.status, vl.called_count, "
+        "       vls.campaign_id AS campaign "
+        "FROM vicidial_list vl "
+        "JOIN vicidial_lists vls ON vl.list_id = vls.list_id "
+        f"WHERE vl.status IN ({placeholders}) AND DATE(vl.last_local_call_time) = %s"
     )
+    params = [*ALL_CODES, day]
+    if campaign:
+        sql += " AND vls.campaign_id = %s"
+        params.append(campaign)
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, (*ALL_CODES, day))
+            cur.execute(sql, params)
             return list(cur.fetchall())
     finally:
         conn.close()
+
+
+def list_campaigns():
+    """Active VICIdial campaigns for the filter dropdown. Best-effort; returns []
+    if unreachable so the page still loads."""
+    try:
+        conn = _connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT campaign_id, campaign_name FROM vicidial_campaigns "
+                    "WHERE active = 'Y' ORDER BY campaign_id"
+                )
+                return list(cur.fetchall())
+        finally:
+            conn.close()
+    except Exception:
+        return []

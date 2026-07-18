@@ -334,6 +334,7 @@ CREATE TABLE IF NOT EXISTS requeue_leads (
     last_disposition TEXT NOT NULL DEFAULT '',
     attempt_count INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'active',     -- active | exhausted | excluded
+    campaign TEXT NOT NULL DEFAULT '',        -- VICIdial campaign_id
     updated_at TEXT NOT NULL,
     UNIQUE(lead_id)
 );
@@ -363,6 +364,11 @@ CREATE TABLE IF NOT EXISTS campaigns (
 CAMPAIGN_EXTRA_COLUMNS = {
     "site_check": "INTEGER NOT NULL DEFAULT 0",
     "enabled": "INTEGER NOT NULL DEFAULT 1",
+}
+
+# Extra columns on requeue_leads added after first release.
+REQUEUE_EXTRA_COLUMNS = {
+    "campaign": "TEXT NOT NULL DEFAULT ''",   # VICIdial campaign_id the disposition came from
 }
 
 # Market types a campaign can target.
@@ -403,6 +409,7 @@ def init_db(db_path=DB_FILE):
     _ensure_lead_columns(conn)
     _ensure_columns(conn, "pull_runs", PULL_RUN_EXTRA_COLUMNS)
     _ensure_columns(conn, "campaigns", CAMPAIGN_EXTRA_COLUMNS)
+    _ensure_columns(conn, "requeue_leads", REQUEUE_EXTRA_COLUMNS)
 
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
