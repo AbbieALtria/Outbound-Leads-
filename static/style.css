@@ -43,6 +43,18 @@ main { padding: 16px 20px 60px; max-width: 1500px; margin: 0 auto; }
   font-size: 11px; font-weight: 700; line-height: 16px; text-align: center;
 }
 
+/* show/hide password toggle */
+.pw-wrap { position: relative; display: inline-block; }
+.pw-wrap input { padding-right: 30px; }
+.pw-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  border: none; background: none; cursor: pointer; padding: 0; margin: 0;
+  font-size: 15px; line-height: 1; opacity: 0.75;
+}
+.pw-eye:hover { opacity: 1; }
+.login-form .pw-wrap { display: block; }
+.login-form .pw-wrap input { width: 100%; }
+
 .login-wrap { display: flex; min-height: 90vh; align-items: center; justify-content: center; }
 .login-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
   padding: 32px 36px; width: 340px; box-shadow: 0 8px 30px rgba(0,0,0,0.08); }

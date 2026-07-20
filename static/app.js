@@ -236,6 +236,18 @@ if (pullBtn) {
   })();
 }
 
+// ---- show/hide password (eye toggle) ----
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".pw-eye");
+  if (!btn) return;
+  const input = btn.closest(".pw-wrap")?.querySelector("input");
+  if (!input) return;
+  const reveal = input.type === "password";
+  input.type = reveal ? "text" : "password";
+  btn.textContent = reveal ? "🙈" : "👁";
+  btn.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
+});
+
 // ---- verify phones button ----
 const verifyBtn = document.getElementById("verify-btn");
 if (verifyBtn) {
