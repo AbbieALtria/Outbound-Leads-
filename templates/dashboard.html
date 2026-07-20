@@ -5,17 +5,34 @@
 <section class="toolbar">
   <div class="campaign-bar">
     <span class="dim small">Campaign</span>
-    <form method="post" action="{{ url_for('activate_campaign') }}" class="campaign-select">
-      <input type="hidden" name="next" value="dashboard">
-      <select name="slug" onchange="this.form.submit()">
-        {% for c in campaigns %}
-        <option value="{{ c['slug'] }}" {{ 'selected' if active_campaign and c['slug'] == active_campaign['slug'] }}>{{ c['name'] }}{{ ' · appt' if c['goal'] == 'appointment' }} ({{ c['audience']|upper }})</option>
-        {% endfor %}
-      </select>
-    </form>
-    <span class="dim small">scores & hooks update to this offer — switching re-ranks every lead</span>
+    <select id="pull-campaign" class="campaign-select"
+            onchange="window.location = this.value ? ('?campaign_id=' + this.value) : '{{ url_for('dashboard') }}'">
+      <option value="">— Ad-hoc pull (no campaign) —</option>
+      {% for c in campaigns %}
+      <option value="{{ c['id'] }}" {{ 'selected' if selected_campaign and c['id'] == selected_campaign['id'] }}>
+        {{ c['client_name'] or 'No client' }} · {{ c['name'] }}
+        {{ '· ' ~ c['industry_slug'] if c['industry_slug'] }} ({{ c['audience']|upper }})
+      </option>
+      {% endfor %}
+    </select>
+    <a class="button" href="{{ url_for('campaigns_page') }}" title="Create & manage campaigns">Manage →</a>
+    {% if selected_campaign %}
+      <span class="dim small">
+        Industry <strong>{{ selected_campaign['industry_slug'] or '—' }}</strong> ·
+        {{ [selected_campaign['city'], selected_campaign['state'], selected_campaign['country']]|select|join(', ') or 'geo not set' }} ·
+        VICIdial <strong>{{ selected_campaign['vici_campaign_id'] or '—' }}</strong> ·
+        offer <strong>{{ active_campaign['name'] if active_campaign }}</strong>
+      </span>
+    {% else %}
+      <span class="dim small">Pick a campaign to pull for a client (industry + geo locked to it), or run an ad-hoc pull below.</span>
+    {% endif %}
   </div>
   <div class="pull-controls">
+    {% if selected_campaign %}
+      {# Campaign-scoped pull: industry + geo come from the campaign, not free dials. #}
+      <span class="pill">{{ selected_campaign['industry_slug'] }}</span>
+      <span class="dim small">in {{ [selected_campaign['city'], selected_campaign['state']]|select|join(', ') or 'saved cities' }}</span>
+    {% else %}
     <select id="pull-industry" title="Industry to pull">
       {% for ind in industries %}
       <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == default_industry }}>{{ ind['label'] }}</option>
@@ -33,11 +50,13 @@
             data-known='{{ known_by_state|tojson }}'
             data-last-city="{{ last_city }}"></select>
     <input id="pull-city-new" class="geo" type="text" placeholder="Type city" autocomplete="off" hidden>
+    {% endif %}
     <input id="pull-target" type="number" min="1" max="1000" value="{{ default_target }}" title="How many leads to pull">
-    <button id="pull-btn" class="primary" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
+    <button id="pull-btn" class="primary" data-campaign="{{ selected_campaign['id'] if selected_campaign }}" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
     <button id="stop-btn" class="danger" hidden>Stop</button>
     <button id="clear-btn" class="button" type="button" title="Clear progress and reset the view">Clear</button>
 
+    {% if not selected_campaign %}
     {% set is_b2c = active_campaign and active_campaign['audience'] == 'b2c' %}
     <form method="post" action="{{ url_for('add_industry') }}" class="add-industry-form"
           title="Add a new {{ 'consumer category' if is_b2c else 'industry' }}">
@@ -45,6 +64,7 @@
       <input type="hidden" name="next" value="dashboard">
       <button type="submit">Add</button>
     </form>
+    {% endif %}
 
     {% if not api_key_set %}
       <span class="warn">OUTSCRAPER_API_KEY not set — pulling disabled (see Settings)</span>

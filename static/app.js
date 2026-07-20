@@ -193,11 +193,15 @@ if (pullBtn) {
   }
 
   pullBtn.addEventListener("click", async () => {
-    const industry = document.getElementById("pull-industry").value;
-    if (!industry) {
+    // Campaign-scoped pull: industry + geo come from the campaign (backend derives
+    // them). Ad-hoc pull: read the industry/geo pickers as before.
+    const campaignId = pullBtn.dataset.campaign || "";
+    const industryEl = document.getElementById("pull-industry");
+    const industry = industryEl ? industryEl.value : "";
+    if (!campaignId && !industry) {
       result.hidden = false;
       result.className = "pull-result err";
-      result.textContent = "Choose an industry to pull.";
+      result.textContent = "Choose a campaign or an industry to pull.";
       return;
     }
     result.hidden = true;
@@ -205,15 +209,18 @@ if (pullBtn) {
     setRunning(true);
     progressText.textContent = "Starting…";
     try {
-      await postJSON("/api/pull", {
-        industries: [industry],
-        target: document.getElementById("pull-target").value,
-        location: {
+      const payload = { target: document.getElementById("pull-target").value };
+      if (campaignId) {
+        payload.campaign_id = Number(campaignId);
+      } else {
+        payload.industries = [industry];
+        payload.location = {
           country: (document.getElementById("pull-country") || {}).value || "",
           state: (document.getElementById("pull-state") || {}).value || "",
           city: currentCity(),
-        },
-      });
+        };
+      }
+      await postJSON("/api/pull", payload);
       poll();
     } catch (e) {
       setRunning(false);

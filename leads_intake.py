@@ -64,9 +64,9 @@ def _normalize_consent(value):
     return v  # keep any explicit label the source sent
 
 
-def _active_campaign(conn):
-    slug = db.get_setting(conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN)
-    return conn.execute("SELECT * FROM campaigns WHERE slug = ?", (slug,)).fetchone()
+def _default_offer(conn):
+    """The offer used to score intake (B2C) leads when none is passed in."""
+    return db.get_offer(conn, db.default_offer_slug(conn))
 
 
 def intake_one(conn, data, source, campaign=None):
@@ -79,7 +79,7 @@ def intake_one(conn, data, source, campaign=None):
         return "invalid"
     phone = format_phone(phone10)
 
-    campaign = campaign or _active_campaign(conn)
+    campaign = campaign or _default_offer(conn)
     rules = scoring.load_rules(campaign)
     lead = {
         "market_type": "b2c",
@@ -115,7 +115,7 @@ def import_csv(conn, text, source):
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         raise ValueError("Empty CSV or no header row.")
-    campaign = _active_campaign(conn)
+    campaign = _default_offer(conn)
     summary = {"added": 0, "duplicates": 0, "invalid": 0, "total": 0}
     for row in reader:
         summary["total"] += 1

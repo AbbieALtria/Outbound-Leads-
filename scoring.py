@@ -1,10 +1,11 @@
 """
-Campaign-agnostic lead scoring.
+Offer-driven lead scoring.
 
 A lead carries only NEUTRAL signals (no website, unclaimed listing, review count,
-rating, no email, ...). A *campaign* decides which signals matter, how many points
-each is worth, and the call-hook wording. Switching campaigns re-scores the same
-leads without re-pulling. SEO is just one campaign preset among many.
+rating, no email, ...). An *offer* decides which signals matter, how many points
+each is worth, and the call-hook wording. Each lead is scored under the offer of
+the CAMPAIGN it belongs to (leads with no campaign use the default offer). SEO is
+just one offer preset among many.
 """
 
 import json
@@ -73,20 +74,47 @@ def evaluate(lead, rules):
     return score, " | ".join(hooks)
 
 
-def load_rules(campaign_row):
+def load_rules(offer_row):
     try:
-        return json.loads(campaign_row["rules"]) if campaign_row else {}
+        return json.loads(offer_row["rules"]) if offer_row else {}
     except (json.JSONDecodeError, TypeError):
         return {}
 
 
-def rescore_all(conn, campaign_row):
-    """Recompute score + call_hook for every lead under the given campaign."""
-    rules = load_rules(campaign_row)
-    updates = []
-    for lead in conn.execute("SELECT * FROM leads"):
-        score, hook = evaluate(lead, rules)
-        updates.append((score, hook, lead["id"]))
+def _rescore_rows(conn, rows, rules):
+    updates = [(*evaluate(lead, rules), lead["id"]) for lead in rows]
     conn.executemany("UPDATE leads SET score = ?, call_hook = ? WHERE id = ?", updates)
-    conn.commit()
     return len(updates)
+
+
+def rescore_all(conn, offer_row):
+    """Recompute score + call_hook for EVERY lead under one offer's rules. Used for
+    the unassigned/global path (leads not attached to a campaign)."""
+    n = _rescore_rows(conn, conn.execute("SELECT * FROM leads"), load_rules(offer_row))
+    conn.commit()
+    return n
+
+
+def rescore_campaign(conn, campaign):
+    """Recompute score + call_hook for one campaign's leads, using that campaign's
+    offer. `campaign` is a campaigns-table row."""
+    import db
+    rules = load_rules(db.offer_for_campaign(conn, campaign))
+    rows = conn.execute("SELECT * FROM leads WHERE campaign_id = ?", (campaign["id"],))
+    n = _rescore_rows(conn, rows, rules)
+    conn.commit()
+    return n
+
+
+def rescore_everything(conn):
+    """Rescore all leads: each campaign's leads under its own offer, and any
+    unassigned (campaign_id NULL) leads under the default offer."""
+    import db
+    total = 0
+    for campaign in conn.execute("SELECT * FROM campaigns").fetchall():
+        total += rescore_campaign(conn, campaign)
+    default_offer = db.get_offer(conn, db.default_offer_slug(conn))
+    rows = conn.execute("SELECT * FROM leads WHERE campaign_id IS NULL")
+    total += _rescore_rows(conn, rows, load_rules(default_offer))
+    conn.commit()
+    return total

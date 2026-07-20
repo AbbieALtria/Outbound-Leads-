@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Campaigns — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h2>Campaigns</h2>
+  <p class="dim small">
+    A campaign is a client engagement: it bundles a <strong>client</strong>, an
+    <strong>offer</strong> (the pitch/scoring), a target <strong>industry</strong> and
+    <strong>geography</strong>, and the <strong>VICIdial campaign</strong> it dials under —
+    so leads and redial cycles all stay tied to the same client with full history.
+  </p>
+  {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
+
+  {% if current_user and current_user['role'] == 'admin' %}
+  <details class="new-campaign">
+    <summary class="button primary">＋ New campaign</summary>
+    <form method="post" action="{{ url_for('campaigns_create') }}" class="stack-form">
+      <label>Name <input type="text" name="name" placeholder="e.g. Acme Roofing — SEO Q3" required></label>
+      <label>Client
+        <select name="client_id">
+          <option value="">— none —</option>
+          {% for cl in clients %}<option value="{{ cl['id'] }}">{{ cl['name'] }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Offer (pitch/scoring)
+        <select name="offer_slug" required>
+          {% for o in offers %}<option value="{{ o['slug'] }}">{{ o['name'] }} ({{ o['audience']|upper }})</option>{% endfor %}
+        </select>
+      </label>
+      <label>Industry (target vertical)
+        <select name="industry_slug">
+          <option value="">— none (B2C: leads come from Import/intake) —</option>
+          {% for ind in industries %}<option value="{{ ind['slug'] }}">{{ ind['label'] }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Country <input type="text" name="country" placeholder="United States"></label>
+      <label>State <input type="text" name="state" placeholder="Alabama"></label>
+      <label>City <input type="text" name="city" placeholder="Birmingham"></label>
+      <label>VICIdial campaign_id <input type="text" name="vici_campaign_id" placeholder="e.g. YP2 — links redial cycles"></label>
+      <button type="submit" class="primary">Create campaign</button>
+    </form>
+  </details>
+  {% endif %}
+
+  <table class="data">
+    <thead>
+      <tr><th>Campaign</th><th>Client</th><th>Offer</th><th>Industry</th><th>Geo</th><th>VICIdial</th><th>Leads</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for c in campaigns %}
+      <tr class="{{ '' if c['status'] == 'active' else 'dim' }}">
+        <td><a href="{{ url_for('campaign_detail', campaign_id=c['id']) }}"><strong>{{ c['name'] }}</strong></a></td>
+        <td>{{ c['client_name'] or '—' }}</td>
+        <td>{{ c['offer_slug'] }} <span class="dim small">({{ c['audience']|upper }})</span></td>
+        <td>{{ c['industry_slug'] or '—' }}</td>
+        <td>{{ [c['city'], c['state'], c['country']]|select|join(', ') or '—' }}</td>
+        <td>{{ c['vici_campaign_id'] or '—' }}</td>
+        <td>{{ c['lead_count'] }}</td>
+        <td><span class="pill">{{ c['status'] }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="dim">No campaigns yet. Create one to pull leads for a client.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

@@ -338,7 +338,7 @@ def _is_cancelled(conn, run_id):
 
 
 def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
-             db_path=db.DB_FILE, log=print):
+             campaign_id=None, db_path=db.DB_FILE, log=print):
     """Execute one pull. Returns the number of leads added.
 
     industry_slugs: one slug, a comma-separated string, or a list of slugs.
@@ -396,12 +396,14 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
         buffer_multiplier = float(db.get_setting(conn, "buffer_multiplier", "2.0"))
         enrich = db.get_setting(conn, "contact_enrichment", "1") == "1"
         validate = db.get_setting(conn, "phone_validation", "0") == "1"
-        # Score new leads with whatever campaign is active (SEO by default).
-        active_slug = db.get_setting(conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN)
-        campaign = conn.execute(
-            "SELECT * FROM campaigns WHERE slug = ?", (active_slug,)
-        ).fetchone()
-        rules = scoring.load_rules(campaign)
+        # This pull runs for one campaign (client engagement); score its leads
+        # under that campaign's offer. campaign_id=None -> unassigned, default offer.
+        camp_row = None
+        if campaign_id:
+            camp_row = conn.execute(
+                "SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        offer = db.offer_for_campaign(conn, camp_row)
+        rules = scoring.load_rules(offer)
         today = str(date.today())
         added_total = 0
         query_errors = 0
@@ -485,10 +487,10 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
                     cur = conn.execute(
                         "INSERT OR IGNORE INTO leads (phone, business_name, address, city, state, "
                         "website, category, industry, score, call_hook, pulled_date, "
-                        "email, contact, postcode, search_query, run_id, "
+                        "email, contact, postcode, search_query, run_id, campaign_id, "
                         "reviews, rating, unclaimed, street_address, maps_url, "
                         "country, facebook, business_status) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             phone, name, address,
                             place.get("city") or target_loc["city"],
@@ -499,7 +501,7 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
                             email,
                             extract_contact(place),
                             extract_postcode(place, address),
-                            query_text, run_id,
+                            query_text, run_id, campaign_id,
                             reviews, rating, unclaimed,
                             place.get("street") or "",
                             place.get("location_link") or place.get("url") or "",

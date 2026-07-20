@@ -45,21 +45,22 @@
   </section>
 
   <section class="card wide">
-    <h2>Campaigns</h2>
-    <p class="dim small">A campaign decides the market type, which signals make a lead "hot", and the
-    call-hook wording — the same lead pool serves any offer. Activating one re-scores every lead.
-    Presets can't be deleted, but any campaign can be edited or disabled.</p>
+    <h2>Offers</h2>
+    <p class="dim small">An <strong>offer</strong> is the pitch/scoring profile — which signals make a lead
+    "hot", the points, and the call-hook wording. A <a href="{{ url_for('campaigns_page') }}">campaign</a>
+    (client engagement) uses one offer. The offer marked here is the <strong>default</strong>, used to score
+    leads that aren't attached to a campaign yet. Presets can't be deleted, but any offer can be edited or disabled.</p>
     <table class="mini">
-      <tr><th></th><th>Campaign</th><th>Market</th><th>Goal</th><th></th></tr>
-      {% for c in campaigns %}
-      <tr class="{{ 'active-campaign' if c['slug'] == active_campaign }} {{ 'disabled-row' if not c['enabled'] }}">
+      <tr><th></th><th>Offer</th><th>Market</th><th>Goal</th><th></th></tr>
+      {% for c in offers %}
+      <tr class="{{ 'active-campaign' if c['slug'] == active_offer }} {{ 'disabled-row' if not c['enabled'] }}">
         <td>
           <form method="post" action="{{ url_for('activate_campaign') }}">
             <input type="hidden" name="slug" value="{{ c['slug'] }}">
-            {% if c['slug'] == active_campaign %}
-              <span class="badge badge-ok">active</span>
+            {% if c['slug'] == active_offer %}
+              <span class="badge badge-ok">default</span>
             {% elif c['enabled'] %}
-              <button type="submit">Activate</button>
+              <button type="submit">Make default</button>
             {% else %}
               <span class="dim small">off</span>
             {% endif %}
@@ -88,7 +89,7 @@
           </form>
           {% if not c['is_preset'] %}
           <form method="post" action="{{ url_for('delete_campaign', campaign_id=c['id']) }}"
-                onsubmit="return confirm('Delete campaign {{ c['name'] }}?')">
+                onsubmit="return confirm('Delete offer {{ c['name'] }}?')">
             <button type="submit" class="danger">Delete</button>
           </form>
           {% endif %}
@@ -97,10 +98,10 @@
       {% endfor %}
     </table>
     <form method="post" action="{{ url_for('add_campaign') }}" class="inline-form" style="margin-top:12px;">
-      <input type="text" name="name" placeholder="New campaign name" required>
+      <input type="text" name="name" placeholder="New offer name" required>
       <label class="dim small">based on
         <select name="base">
-          {% for c in campaigns %}<option value="{{ c['slug'] }}">{{ c['name'] }}</option>{% endfor %}
+          {% for c in offers %}<option value="{{ c['slug'] }}">{{ c['name'] }}</option>{% endfor %}
         </select>
       </label>
       <label class="dim small">market
@@ -111,10 +112,10 @@
       <label class="dim small">goal
         <select name="goal"><option value="close">Close on call</option><option value="appointment">Appointment setting</option></select>
       </label>
-      <button type="submit" class="primary">Add campaign</button>
+      <button type="submit" class="primary">Add offer</button>
     </form>
-    <p class="dim small">New campaigns copy the scoring rules of the "based on" campaign — a starting point you can refine later.
-    B2C campaigns are ready as definitions; sourcing B2C consumer leads needs a consumer-data source (coming next).</p>
+    <p class="dim small">New offers copy the scoring rules of the "based on" offer — a starting point you can refine later.
+    To run an offer for a client, create a <a href="{{ url_for('campaigns_page') }}">campaign</a>.</p>
   </section>
 
   <section class="card">

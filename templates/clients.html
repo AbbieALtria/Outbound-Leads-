@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Clients — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h2>Clients</h2>
+  <p class="dim small">The customers leads are generated for. Each client owns one or more campaigns.</p>
+  {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
+
+  {% if current_user and current_user['role'] == 'admin' %}
+  <form method="post" action="{{ url_for('clients_create') }}" class="row-form">
+    <input type="text" name="name" placeholder="Client name" required>
+    <input type="text" name="contact_name" placeholder="Contact person">
+    <input type="email" name="email" placeholder="Email">
+    <input type="text" name="phone" placeholder="Phone">
+    <input type="text" name="notes" placeholder="Notes">
+    <button type="submit" class="primary">Add client</button>
+  </form>
+  {% endif %}
+
+  <table class="data">
+    <thead>
+      <tr><th>Client</th><th>Contact</th><th>Email</th><th>Phone</th><th>Campaigns</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for c in clients %}
+      <tr class="{{ '' if c['enabled'] else 'dim' }}">
+        <td><strong>{{ c['name'] }}</strong>{% if not c['enabled'] %} <span class="pill">disabled</span>{% endif %}</td>
+        <td>{{ c['contact_name'] or '—' }}</td>
+        <td>{{ c['email'] or '—' }}</td>
+        <td>{{ c['phone'] or '—' }}</td>
+        <td>{{ c['campaign_count'] }}</td>
+        <td>
+          {% if current_user and current_user['role'] == 'admin' %}
+          <form method="post" action="{{ url_for('clients_toggle', client_id=c['id']) }}" style="display:inline">
+            <button type="submit" class="button">{{ 'Disable' if c['enabled'] else 'Enable' }}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="dim">No clients yet. Add one to start a campaign.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

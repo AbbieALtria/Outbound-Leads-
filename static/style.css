@@ -237,3 +237,19 @@ table.mini td { padding: 7px 8px; border-bottom: 1px solid var(--border); }
 @media (max-width: 900px) {
   .settings-grid { grid-template-columns: 1fr; }
 }
+
+/* Clients / Campaigns pages */
+table.data { width: 100%; border-collapse: collapse; margin-top: 12px; }
+table.data th, table.data td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+table.data th { color: var(--dim); font-weight: 600; }
+table.data tr.dim td { opacity: 0.55; }
+.row-form { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.row-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; }
+.stack-form { display: flex; flex-direction: column; gap: 10px; max-width: 460px; margin-top: 12px; }
+.stack-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--dim); }
+.stack-form input, .stack-form select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; color: inherit; }
+.stat-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+details.new-campaign { margin: 8px 0 4px; }
+details.new-campaign > summary { display: inline-block; cursor: pointer; list-style: none; }
+details.new-campaign > summary::-webkit-details-marker { display: none; }

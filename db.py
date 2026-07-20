@@ -33,10 +33,13 @@ OLD_CITIES_FILE = SCRIPT_DIR / "cities.txt"
 LEAD_STATUSES = ["new", "called", "interested", "appointment", "not_interested",
                  "callback", "dnc"]
 
-# Campaign presets. Each scores leads off NEUTRAL signals (see scoring.py) — no
-# SEO logic is hard-coded anywhere else. audience: b2b|b2c, goal: close|appointment.
-# rules map a signal -> {points, hook}. {reviews}/{rating} interpolate in hooks.
-CAMPAIGN_PRESETS = {
+# Offer presets. An OFFER is the scoring/pitch profile (what makes a lead "hot" +
+# the call-hook wording); a CAMPAIGN (see the campaigns table) is a client
+# engagement that USES one offer. Each offer scores leads off NEUTRAL signals (see
+# scoring.py) — no SEO logic is hard-coded anywhere else. audience: b2b|b2c,
+# goal: close|appointment. rules map a signal -> {points, hook}; {reviews}/{rating}
+# interpolate in hooks.
+OFFER_PRESETS = {
     "seo": {
         "name": "SEO / Rank Higher", "audience": "b2b", "goal": "close",
         "site_check": 1,
@@ -83,7 +86,9 @@ CAMPAIGN_PRESETS = {
     "healthcare_appt": {"name": "Healthcare Appointments", "audience": "b2c", "goal": "appointment", "rules": {}},
     "auto_services_b2c": {"name": "Automotive Services", "audience": "b2c", "goal": "appointment", "rules": {}},
 }
-DEFAULT_ACTIVE_CAMPAIGN = "seo"
+# The offer used to score leads that aren't attached to a campaign yet (legacy /
+# unassigned leads). Kept under the old setting key name for back-compat.
+DEFAULT_OFFER = "seo"
 
 DEFAULT_QUERY_TEMPLATE = "{industry} in {city}"
 
@@ -207,7 +212,9 @@ DEFAULT_SETTINGS = {
     "drop_voip_export": "0",
     # Daily requeue job time, EST (HH:MM). Reads VICIdial dispositions.
     "requeue_run_time": "23:30",
-    "active_campaign": DEFAULT_ACTIVE_CAMPAIGN,
+    # Offer used to score leads with no campaign (legacy/unassigned). The key name
+    # is historical ("active_campaign"); it now holds the default OFFER slug.
+    "active_campaign": DEFAULT_OFFER,
 }
 
 # Columns added after the first release; init_db() adds them to old databases.
@@ -221,6 +228,9 @@ LEAD_EXTRA_COLUMNS = {
     "phone_valid": "INTEGER NOT NULL DEFAULT 1",
     "validated_at": "TEXT",
     "run_id": "INTEGER",  # the pull_runs row this lead came from (NULL = legacy/import)
+    # The campaign (client engagement) this lead belongs to. NULL = legacy /
+    # unassigned (shown under the house client, scored under the default offer).
+    "campaign_id": "INTEGER",
     # Neutral campaign signals (NULL = unknown, e.g. legacy leads). Any campaign
     # scores off these instead of anything SEO-specific being hard-coded.
     "reviews": "INTEGER",
@@ -245,6 +255,7 @@ LEAD_EXTRA_COLUMNS = {
 # Extra columns on pull_runs added after first release.
 PULL_RUN_EXTRA_COLUMNS = {
     "cancel": "INTEGER NOT NULL DEFAULT 0",
+    "campaign_id": "INTEGER",   # the campaign this pull ran for (NULL = ad-hoc/legacy)
 }
 
 SCHEMA = """
@@ -358,7 +369,10 @@ CREATE TABLE IF NOT EXISTS alerts (
     seen INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS campaigns (
+-- An OFFER is the scoring/pitch profile (what makes a lead hot + call-hook
+-- wording). Was previously named "campaigns"; _migrate_campaigns_to_offers()
+-- renames the old table in place before this runs.
+CREATE TABLE IF NOT EXISTS offers (
     id INTEGER PRIMARY KEY,
     slug TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
@@ -367,12 +381,44 @@ CREATE TABLE IF NOT EXISTS campaigns (
     rules TEXT NOT NULL DEFAULT '{}',        -- JSON: {signal: {points, hook}}
     is_preset INTEGER NOT NULL DEFAULT 0,
     site_check INTEGER NOT NULL DEFAULT 0,   -- run live website-quality probe during pull?
-    enabled INTEGER NOT NULL DEFAULT 1       -- show as an activatable campaign?
+    enabled INTEGER NOT NULL DEFAULT 1       -- show as a usable offer?
 );
+
+-- A CLIENT owns campaigns (the paying customer the leads are generated for).
+CREATE TABLE IF NOT EXISTS clients (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    contact_name TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT ''
+);
+
+-- A CAMPAIGN is a client engagement: it bundles a client + an offer + a target
+-- industry + geography, and maps to one VICIdial campaign_id so redial cycles
+-- stay tied to the same client with full history. Industry/geo are attributes
+-- OF the campaign, never picked independently of it.
+CREATE TABLE IF NOT EXISTS campaigns (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+    offer_slug TEXT NOT NULL DEFAULT '',      -- REFERENCES offers(slug)
+    audience TEXT NOT NULL DEFAULT 'b2b',     -- copied from the offer at create time
+    industry_slug TEXT NOT NULL DEFAULT '',   -- REFERENCES industries(slug); '' for B2C
+    country TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    vici_campaign_id TEXT NOT NULL DEFAULT '',-- the VICIdial campaign_id (redial bridge)
+    status TEXT NOT NULL DEFAULT 'active',    -- active | paused | archived
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_campaigns_vici ON campaigns(vici_campaign_id);
 """
 
-# Extra columns on campaigns added after the table's first release.
-CAMPAIGN_EXTRA_COLUMNS = {
+# Extra columns on offers (the old campaigns table) added after its first release.
+OFFER_EXTRA_COLUMNS = {
     "site_check": "INTEGER NOT NULL DEFAULT 0",
     "enabled": "INTEGER NOT NULL DEFAULT 1",
 }
@@ -414,6 +460,37 @@ def set_setting(conn, key, value):
     )
 
 
+def default_offer_slug(conn):
+    """Offer slug used to score leads with no campaign (setting key is historical)."""
+    return get_setting(conn, "active_campaign", DEFAULT_OFFER)
+
+
+def get_offer(conn, slug):
+    return conn.execute("SELECT * FROM offers WHERE slug = ?", (slug,)).fetchone()
+
+
+def offer_for_campaign(conn, campaign):
+    """The offer row a campaign scores under; falls back to the default offer."""
+    slug = ""
+    if campaign is not None:
+        try:
+            slug = campaign["offer_slug"] or ""
+        except (KeyError, IndexError):
+            slug = ""
+    slug = slug or default_offer_slug(conn)
+    return get_offer(conn, slug) or get_offer(conn, DEFAULT_OFFER)
+
+
+def campaign_by_vici(conn, vici_id):
+    """The campaign engagement mapped to a VICIdial campaign_id, or None."""
+    vici_id = (vici_id or "").strip()
+    if not vici_id:
+        return None
+    return conn.execute(
+        "SELECT * FROM campaigns WHERE vici_campaign_id = ? AND vici_campaign_id != '' "
+        "LIMIT 1", (vici_id,)).fetchone()
+
+
 def add_alert(conn, message, kind="", link=""):
     conn.execute(
         "INSERT INTO alerts (kind, message, link, created_at, seen) VALUES (?, ?, ?, ?, 0)",
@@ -438,17 +515,21 @@ def mark_alert_seen(conn, alert_id):
 def init_db(db_path=DB_FILE):
     """Create schema, seed defaults, and run the one-time migration."""
     conn = connect(db_path)
+    # Rename the old offer table (campaigns->offers) BEFORE the schema runs, so the
+    # CREATE TABLE for the new engagement `campaigns` builds a fresh table.
+    _migrate_campaigns_to_offers(conn)
     conn.executescript(SCHEMA)
     _ensure_lead_columns(conn)
     _ensure_columns(conn, "pull_runs", PULL_RUN_EXTRA_COLUMNS)
-    _ensure_columns(conn, "campaigns", CAMPAIGN_EXTRA_COLUMNS)
+    _ensure_columns(conn, "offers", OFFER_EXTRA_COLUMNS)
     _ensure_columns(conn, "requeue_leads", REQUEUE_EXTRA_COLUMNS)
 
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     _seed_industries(conn)
-    _seed_campaigns(conn)
+    _seed_offers(conn)
+    _seed_default_client(conn)
     _migrate_cities(conn)
     _migrate_leads(conn)
     _backfill_lead_fields(conn)
@@ -473,15 +554,38 @@ def _ensure_columns(conn, table, columns):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
-def _seed_campaigns(conn):
+def _migrate_campaigns_to_offers(conn):
+    """One-time, idempotent: the table historically called `campaigns` actually
+    held OFFERS (scoring profiles). Rename it to `offers` so the name `campaigns`
+    is free for the new client-engagement table. Only fires when an old-shape
+    campaigns table exists (has a `rules` column) and `offers` doesn't yet."""
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "offers" in tables or "campaigns" not in tables:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(campaigns)")}
+    if "rules" in cols:                       # old offer shape -> rename in place
+        conn.execute("ALTER TABLE campaigns RENAME TO offers")
+
+
+def _seed_offers(conn):
     import json
-    for slug, info in CAMPAIGN_PRESETS.items():
+    for slug, info in OFFER_PRESETS.items():
         conn.execute(
-            "INSERT OR IGNORE INTO campaigns (slug, name, audience, goal, rules, is_preset, site_check) "
+            "INSERT OR IGNORE INTO offers (slug, name, audience, goal, rules, is_preset, site_check) "
             "VALUES (?, ?, ?, ?, ?, 1, ?)",
             (slug, info["name"], info["audience"], info["goal"],
              json.dumps(info["rules"]), info.get("site_check", 0)),
         )
+
+
+def _seed_default_client(conn):
+    """A house client so legacy/unassigned leads have an owner to show under."""
+    conn.execute(
+        "INSERT OR IGNORE INTO clients (id, name, contact_name, created_at) "
+        "VALUES (1, 'Unassigned (house)', '', ?)",
+        (now_iso(),),
+    )
 
 
 def _backfill_reviews(conn):
