@@ -99,7 +99,8 @@ def process(conn, dispositions, day=None, dry_run=False):
             lead_by_phone[p] = row["id"]
 
     summary = {"processed": 0, "requeued": 0, "exhausted": 0,
-               "suppressed": 0, "dnc": 0, "unmatched": 0}
+               "suppressed": 0, "dnc": 0, "unmatched": 0, "ignored": 0,
+               "by_status": {}}
     now = db.now_iso()
     cooldown = (datetime.now(EST) + timedelta(days=COOLDOWN_DAYS)).isoformat(timespec="seconds")
 
@@ -113,6 +114,10 @@ def process(conn, dispositions, day=None, dry_run=False):
             count = 0
         if not phone:
             continue
+        # Per-disposition tally so the result page can mirror the ops scoreboard
+        # and prove every not-reached lead is accounted for (none silently lost).
+        if status:
+            summary["by_status"][status] = summary["by_status"].get(status, 0) + 1
 
         if status in ops_dispositions.DNC_CODES:           # YPDNC - hard do-not-call
             # A do-not-call is legal and permanent, so unlike YPNI it's global:
@@ -144,6 +149,9 @@ def process(conn, dispositions, day=None, dry_run=False):
             continue
 
         if status not in ops_dispositions.RETRY_CODES:
+            # Reached-and-done outcomes (SALE, and any code we don't act on). Not a
+            # lost lead — a completed one; counted here only so the totals add up.
+            summary["ignored"] += 1
             continue
 
         state = "exhausted" if count >= _cap_for(status) else "active"

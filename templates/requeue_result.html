@@ -16,6 +16,47 @@
       <li class="dim">{{ summary.get('processed', 0) }} dispositions processed (source-agnostic — numbers not generated here are registered from VICIdial so they can be redialed too)</li>
     </ul>
 
+    {# --- Lead accounting: prove every paid-for lead is accounted for, and make
+       the difference from the ops "total calls" scoreboard obvious. --- #}
+    {% set requeued = summary.get('requeued', 0) %}
+    {% set exhausted = summary.get('exhausted', 0) %}
+    {% set suppressed = summary.get('suppressed', 0) %}
+    {% set dnc = summary.get('dnc', 0) %}
+    {% set ignored = summary.get('ignored', 0) %}
+    <div class="card" style="margin-top:14px;background:#f7f9fc;">
+      <h3 style="margin-top:0;">🧾 Lead accounting — nothing is lost</h3>
+      <p class="dim small" style="margin-top:0;">
+        Leads cost money to generate, so every not-reached number is kept and
+        re-served. Here is where each disposition went:
+      </p>
+      <ul style="margin-bottom:8px;">
+        <li><strong>{{ requeued }}</strong> re-served for redial — VM, callback, no-answer, drop, etc. <span class="dim">(kept ✓)</span></li>
+        <li><strong>{{ exhausted }}</strong> kept but paused — already hit the dial cap (still on file, not deleted) <span class="dim">(kept ✓)</span></li>
+        <li><strong>{{ suppressed }}</strong> not-interested — 90-day pause, then eligible again <span class="dim">(kept ✓)</span></li>
+        <li><strong>{{ dnc }}</strong> do-not-call — legally removed from dialing <span class="dim">(compliance)</span></li>
+        <li><strong>{{ ignored }}</strong> completed outcomes (e.g. SALE) — finished, no redial needed</li>
+      </ul>
+      <p class="small" style="margin:0;">
+        <strong>{{ requeued + exhausted + suppressed + dnc + ignored }}</strong> accounted for
+        of <strong>{{ summary.get('processed', 0) }}</strong> processed.
+        <span class="dim">The ops dashboard's higher "total calls" counts every dial and every
+        outcome (including sales); this counts leads to redial — so it is smaller by design,
+        never because a lead was dropped.</span>
+      </p>
+    </div>
+
+    {% if summary.get('by_status') %}
+    {# Per-disposition breakdown, so this mirrors the ops scoreboard cards. #}
+    <div style="margin-top:12px;">
+      <h3 style="margin-bottom:6px;">Disposition breakdown</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        {% for code, n in summary['by_status']|dictsort(by='value', reverse=true) %}
+        <span class="button" style="cursor:default;">{{ code }} <strong>{{ n }}</strong></span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     {% if dry_run %}
     {# One-click commit right from the preview — carries the same date + campaign. #}
     <form method="post" action="{{ url_for('requeue_run') }}" style="margin-top:12px;">
