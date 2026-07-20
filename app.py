@@ -13,7 +13,7 @@ import json
 import os
 import re
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
@@ -545,6 +545,69 @@ def run_requeue_now(day=None, campaign=None, dry_run=False):
         return summary
     finally:
         conn.close()
+
+
+# How far back the nightly job will reach to recover missed days. Bounds the work
+# so a long outage (or a fresh deploy) can't trigger a huge historical sweep.
+BACKFILL_MAX_DAYS = 14
+
+
+def _days_to_backfill(last_day, today, cap=BACKFILL_MAX_DAYS):
+    """Days (oldest→newest, 'YYYY-MM-DD') to process this run: from the day after
+    the last successful run through today, clamped to at most `cap` days back. On
+    the very first run (no last_day) this is just [today] — no historical sweep."""
+    fmt = "%Y-%m-%d"
+    today_d = datetime.strptime(today, fmt).date()
+    start = today_d
+    if last_day:
+        try:
+            start = datetime.strptime(last_day, fmt).date() + timedelta(days=1)
+        except ValueError:
+            start = today_d
+    earliest = today_d - timedelta(days=cap)
+    start = min(max(start, earliest), today_d)
+    days, d = [], start
+    while d <= today_d:
+        days.append(d.strftime(fmt))
+        d += timedelta(days=1)
+    return days
+
+
+def run_requeue_backfill():
+    """Scheduled entry point. Processes today PLUS any days missed since the last
+    successful run, so a night the job didn't fire (deploy, container asleep,
+    VICIdial briefly unreachable) never costs us paid-for leads. process() is
+    idempotent, so re-touching an already-done day is a no-op."""
+    today = requeue.today_est()
+    conn = db.connect()
+    try:
+        last = db.get_setting(conn, "requeue_last_success_day", "")
+    finally:
+        conn.close()
+    days = _days_to_backfill(last, today)
+
+    results = [run_requeue_now(day=d, dry_run=False) for d in days]
+    ok = [r for r in results if "error" not in r]
+    if not ok:
+        return results  # VICIdial unreachable — don't advance the marker; retry next run
+
+    conn = db.connect()
+    try:
+        db.set_setting(conn, "requeue_last_success_day", today)
+        missed = [d for d in days if d != today]
+        if missed:
+            recovered = sum(r.get("requeued", 0) for r in ok if r.get("day") in missed)
+            db.add_alert(
+                conn,
+                f"Backfill recovered {len(missed)} missed day(s) "
+                f"({missed[0]}…{missed[-1]}) — {recovered} not-reached leads re-served.",
+                kind="requeue_backfill", link="/requeue",
+            )
+        db.set_setting(conn, "requeue_last_run", db.now_iso())
+        conn.commit()
+    finally:
+        conn.close()
+    return results
 
 
 @app.route("/requeue")
@@ -1213,7 +1276,7 @@ def _start_scheduler():
         conn.close()
         hour, _, minute = run_time.partition(":")
         sched = BackgroundScheduler(timezone=ZoneInfo("America/New_York"))
-        sched.add_job(lambda: run_requeue_now(dry_run=False),
+        sched.add_job(run_requeue_backfill,
                       CronTrigger(hour=int(hour or 23), minute=int(minute or 30)),
                       id="requeue_daily", replace_existing=True)
         sched.start()
