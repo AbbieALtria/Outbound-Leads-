@@ -1035,13 +1035,19 @@ def api_intake():
     }
     source = "api:" + (data.get("source") or "vendor")
     conn = get_db()
-    campaign = None
-    if data.get("campaign"):
-        # 'campaign' here names an OFFER slug (scoring profile) for this lead.
-        campaign = conn.execute(
-            "SELECT * FROM offers WHERE slug = ?", (data["campaign"],)
-        ).fetchone()
-    result = leads_intake.intake_one(conn, payload, source, campaign=campaign)
+    # Attach to a campaign (client engagement) so the lead gets client ownership +
+    # history and scores under that campaign's offer. Accept our campaign_id or the
+    # client's VICIdial campaign_id; fall back to an explicit offer slug.
+    campaign_id = data.get("campaign_id")
+    if not campaign_id and data.get("vici_campaign_id"):
+        camp = db.campaign_by_vici(conn, data["vici_campaign_id"])
+        campaign_id = camp["id"] if camp else None
+    offer = None
+    if not campaign_id and data.get("campaign"):
+        offer = conn.execute(
+            "SELECT * FROM offers WHERE slug = ?", (data["campaign"],)).fetchone()
+    result = leads_intake.intake_one(conn, payload, source,
+                                     campaign_id=campaign_id, offer=offer)
     conn.commit()
     status = 201 if result == "added" else 200
     return jsonify({"ok": result != "invalid", "result": result}), (
@@ -1050,7 +1056,8 @@ def api_intake():
 
 @app.route("/import/leads", methods=["GET", "POST"])
 def import_leads():
-    """Upload a CSV list of consumer (B2C) leads."""
+    """Upload a CSV list of consumer (B2C) leads, optionally into a campaign."""
+    conn = get_db()
     summary = error = None
     if request.method == "POST":
         f = request.files.get("file")
@@ -1058,12 +1065,23 @@ def import_leads():
             error = "Choose a CSV file first."
         else:
             try:
+                campaign_id = None
+                if request.form.get("campaign_id"):
+                    campaign_id = int(request.form["campaign_id"])
                 text = f.read().decode("utf-8-sig", errors="replace")
-                summary = leads_intake.import_csv(get_db(), text, f"csv:{f.filename}")
+                summary = leads_intake.import_csv(conn, text, f"csv:{f.filename}",
+                                                  campaign_id=campaign_id)
                 summary["filename"] = f.filename
             except ValueError as e:
                 error = str(e)
+    # B2C campaigns to import into (the intake path is for consumer leads).
+    b2c_campaigns = conn.execute(
+        "SELECT cp.*, cl.name AS client_name FROM campaigns cp "
+        "LEFT JOIN clients cl ON cl.id = cp.client_id "
+        "WHERE cp.audience = 'b2c' AND cp.status != 'archived' ORDER BY cp.name"
+    ).fetchall()
     return render_template("import_leads.html", summary=summary, error=error,
+                           b2c_campaigns=b2c_campaigns,
                            intake_enabled=bool(os.environ.get("INTAKE_API_KEY")))
 
 
