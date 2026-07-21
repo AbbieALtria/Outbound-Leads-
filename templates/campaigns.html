@@ -10,6 +10,9 @@
     <strong>geography</strong>, and the <strong>VICIdial campaign</strong> it dials under —
     so leads and redial cycles all stay tied to the same client with full history.
   </p>
+  <p class="dim small">Lead generation is <strong>deduped per campaign</strong>: re-running a
+  pull (weekly or on demand) never repeats a business already in this campaign — it only
+  adds new ones. The same business can still be a lead for a different client's campaign.</p>
   {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
 
   {% if current_user and current_user['role'] == 'admin' %}
