@@ -10,6 +10,8 @@
   <nav class="topnav">
     <span class="brand">Lead Gen Platform</span>
     <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}">Dashboard</a>
+    <a href="{{ url_for('clients_page') }}" class="{{ 'active' if request.endpoint == 'clients_page' }}">Clients</a>
+    <a href="{{ url_for('campaigns_page') }}" class="{{ 'active' if request.endpoint in ('campaigns_page', 'campaign_detail') }}">Campaigns</a>
     <a href="{{ url_for('history') }}" class="{{ 'active' if request.endpoint == 'history' }}">History</a>
     <a href="{{ url_for('import_leads') }}" class="{{ 'active' if request.endpoint == 'import_leads' }}">Import Leads</a>
     <a href="{{ url_for('import_call_log') }}" class="{{ 'active' if request.endpoint == 'import_call_log' }}">Call Log</a>

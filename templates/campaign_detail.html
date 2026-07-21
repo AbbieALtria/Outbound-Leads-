@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ campaign['name'] }} — Campaign{% endblock %}
+{% block content %}
+
+<section class="card">
+  <p class="dim small"><a href="{{ url_for('campaigns_page') }}">← All campaigns</a></p>
+  <h2>{{ campaign['name'] }} <span class="pill">{{ campaign['status'] }}</span></h2>
+  <p class="dim">
+    Client <strong>{{ campaign['client_name'] or '—' }}</strong> ·
+    Offer <strong>{{ offer['name'] if offer }}</strong> ({{ campaign['audience']|upper }}) ·
+    Industry <strong>{{ campaign['industry_slug'] or '—' }}</strong> ·
+    {{ [campaign['city'], campaign['state'], campaign['country']]|select|join(', ') or 'no geo' }} ·
+    VICIdial <strong>{{ campaign['vici_campaign_id'] or '—' }}</strong>
+  </p>
+  <p>
+    <a class="button primary" href="{{ url_for('dashboard', campaign_id=campaign['id']) }}">Go to dashboard &amp; pull →</a>
+  </p>
+</section>
+
+<section class="card">
+  <h3>Lead lifecycle</h3>
+  <div class="stat-row">
+    {% set total = status_counts.values()|sum %}
+    <span class="stat"><strong>{{ total }}</strong> total leads</span>
+    {% for s in statuses %}
+      {% if status_counts.get(s) %}<span class="stat">{{ status_counts[s] }} {{ s.replace('_', ' ') }}</span>{% endif %}
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <h3>Generation cycles (pulls)</h3>
+  <table class="data">
+    <thead><tr><th>When</th><th>Industry</th><th>Target</th><th>Added</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td>{{ r['started_at'][:16].replace('T', ' ') }}</td>
+        <td>{{ r['industry'] }}</td>
+        <td>{{ r['target'] }}</td>
+        <td>{{ r['added'] }}</td>
+        <td><span class="pill">{{ r['status'] }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="dim">No pulls yet for this campaign.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h3>Redial cycle (not-reached leads)</h3>
+  <p class="dim small">Leads sent back for redial via VICIdial dispositions — same client, same offer, next cycle.</p>
+  <table class="data">
+    <thead><tr><th>Business</th><th>Phone</th><th>Last disposition</th><th>Attempts</th><th>State</th><th>Batch</th></tr></thead>
+    <tbody>
+      {% for r in requeue_rows %}
+      <tr class="{{ '' if r['state'] == 'active' else 'dim' }}">
+        <td>{{ r['business_name'] }}</td>
+        <td>{{ r['phone'] }}</td>
+        <td>{{ r['last_disposition'] }}</td>
+        <td>{{ r['attempt_count'] }}</td>
+        <td><span class="pill">{{ r['state'] }}</span></td>
+        <td>{{ r['batch_date'] }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="dim">Nothing in the redial cycle yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if current_user and current_user['role'] == 'admin' %}
+<section class="card">
+  <h3>Edit campaign</h3>
+  <form method="post" action="{{ url_for('campaigns_edit', campaign_id=campaign['id']) }}" class="stack-form">
+    <label>Name <input type="text" name="name" value="{{ campaign['name'] }}"></label>
+    <label>Client
+      <select name="client_id">
+        <option value="">— none —</option>
+        {% for cl in clients %}<option value="{{ cl['id'] }}" {{ 'selected' if cl['id'] == campaign['client_id'] }}>{{ cl['name'] }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Offer
+      <select name="offer_slug">
+        {% for o in offers %}<option value="{{ o['slug'] }}" {{ 'selected' if o['slug'] == campaign['offer_slug'] }}>{{ o['name'] }} ({{ o['audience']|upper }})</option>{% endfor %}
+      </select>
+    </label>
+    <label>Industry
+      <select name="industry_slug">
+        <option value="">— none —</option>
+        {% for ind in industries %}<option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == campaign['industry_slug'] }}>{{ ind['label'] }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Country <input type="text" name="country" value="{{ campaign['country'] }}"></label>
+    <label>State <input type="text" name="state" value="{{ campaign['state'] }}"></label>
+    <label>City <input type="text" name="city" value="{{ campaign['city'] }}"></label>
+    <label>VICIdial campaign_id <input type="text" name="vici_campaign_id" value="{{ campaign['vici_campaign_id'] }}"></label>
+    <label>Status
+      <select name="status">
+        {% for s in campaign_statuses %}<option value="{{ s }}" {{ 'selected' if s == campaign['status'] }}>{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="primary">Save changes</button>
+  </form>
+</section>
+{% endif %}
+
+{% endblock %}

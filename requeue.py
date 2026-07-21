@@ -31,12 +31,14 @@ def _cap_for(status):
     return CALLBACK_CAP if status in ops_dispositions.CALLBACK_CODES else CAP
 
 
-def _ensure_lead(conn, d, phone10, batch_date):
+def _ensure_lead(conn, d, phone10, batch_date, campaign_id=None):
     """Return the leads.id for this number, creating it from VICIdial's own record
     if we didn't generate it. Source-agnostic requeue: a not-reached number that
     isn't ours still needs a lead row so the cleaned/segmented dial export can
     re-serve it. Tagged lead_source='vicidial' so it stays separate from
-    app-generated leads (and out of the lead-gen dashboard, which is run-scoped)."""
+    app-generated leads (and out of the lead-gen dashboard, which is run-scoped).
+    campaign_id ties the lead to the client engagement (via VICIdial campaign_id)
+    so redial cycles keep the same client/industry/offer and full history."""
     stored = format_phone(phone10)
     # This client loads the business name into vicidial_list.comments and the full
     # address into address1 (the standard name fields are empty) — confirmed via
@@ -56,7 +58,8 @@ def _ensure_lead(conn, d, phone10, batch_date):
     email = (d.get("email") or "").strip()
 
     row = conn.execute(
-        "SELECT id, business_name, lead_source FROM leads WHERE phone = ?", (stored,)).fetchone()
+        "SELECT id, business_name, lead_source, campaign_id FROM leads WHERE phone = ?",
+        (stored,)).fetchone()
     if row:
         # Backfill a VICIdial-registered lead that was saved thin before this
         # mapping existed (never touch app-generated leads).
@@ -66,13 +69,17 @@ def _ensure_lead(conn, d, phone10, batch_date):
                 "UPDATE leads SET business_name=?, address=?, city=?, state=?, postcode=?, email=? "
                 "WHERE id=?",
                 (name, address, city, region, postcode, email, row["id"]))
+        # Attach to its campaign the first time we can map the VICIdial campaign_id.
+        if campaign_id and row["campaign_id"] is None:
+            conn.execute("UPDATE leads SET campaign_id=? WHERE id=?",
+                         (campaign_id, row["id"]))
         return row["id"]
     status = "dnc" if dnc.is_suppressed(conn, phone10) else "new"
     conn.execute(
         "INSERT INTO leads (phone, business_name, address, city, state, postcode, email, "
-        "pulled_date, lead_source, market_type, status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'vicidial', 'b2b', ?)",
-        (stored, name, address, city, region, postcode, email, batch_date, status),
+        "pulled_date, campaign_id, lead_source, market_type, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'vicidial', 'b2b', ?)",
+        (stored, name, address, city, region, postcode, email, batch_date, campaign_id, status),
     )
     return conn.execute("SELECT id FROM leads WHERE phone = ?", (stored,)).fetchone()["id"]
 
@@ -99,7 +106,8 @@ def process(conn, dispositions, day=None, dry_run=False):
             lead_by_phone[p] = row["id"]
 
     summary = {"processed": 0, "requeued": 0, "exhausted": 0,
-               "suppressed": 0, "dnc": 0, "unmatched": 0}
+               "suppressed": 0, "dnc": 0, "unmatched": 0, "ignored": 0,
+               "by_status": {}}
     now = db.now_iso()
     cooldown = (datetime.now(EST) + timedelta(days=COOLDOWN_DAYS)).isoformat(timespec="seconds")
 
@@ -113,6 +121,10 @@ def process(conn, dispositions, day=None, dry_run=False):
             count = 0
         if not phone:
             continue
+        # Per-disposition tally so the result page can mirror the ops scoreboard
+        # and prove every not-reached lead is accounted for (none silently lost).
+        if status:
+            summary["by_status"][status] = summary["by_status"].get(status, 0) + 1
 
         if status in ops_dispositions.DNC_CODES:           # YPDNC - hard do-not-call
             # A do-not-call is legal and permanent, so unlike YPNI it's global:
@@ -144,15 +156,23 @@ def process(conn, dispositions, day=None, dry_run=False):
             continue
 
         if status not in ops_dispositions.RETRY_CODES:
+            # Reached-and-done outcomes (SALE, and any code we don't act on). Not a
+            # lost lead — a completed one; counted here only so the totals add up.
+            summary["ignored"] += 1
             continue
 
         state = "exhausted" if count >= _cap_for(status) else "active"
-        campaign = (d.get("campaign") or "").strip()
+        campaign = (d.get("campaign") or "").strip()   # VICIdial campaign_id string
         summary["exhausted" if state == "exhausted" else "requeued"] += 1
         if not dry_run:
+            # Map the VICIdial campaign_id to our campaign (client engagement), so
+            # the redial lead stays tied to the same client/industry/offer.
+            camp = db.campaign_by_vici(conn, campaign)
+            camp_id = camp["id"] if camp else None
             # Source-agnostic: if we didn't generate this number, register it from
             # VICIdial's own record so the segmented dial export can re-serve it.
-            lead_id = lead_by_phone.get(phone) or _ensure_lead(conn, d, phone, day)
+            lead_id = (lead_by_phone.get(phone)
+                       or _ensure_lead(conn, d, phone, day, campaign_id=camp_id))
             lead_by_phone[phone] = lead_id
             # Keep a manual 'excluded' decision sticky; otherwise set active/exhausted.
             conn.execute(

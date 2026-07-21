@@ -13,7 +13,7 @@ import json
 import os
 import re
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
@@ -45,14 +45,11 @@ _seed_conn = db.connect()
 users.ensure_admin(_seed_conn)
 
 # Bump when scoring/hook logic changes, so stored score+call_hook are refreshed
-# once on the next start instead of showing stale hooks.
-SCORING_VERSION = "2"
+# once on the next start instead of showing stale hooks. Bumped to 3 for the
+# per-campaign scoring model (each campaign's leads scored under its own offer).
+SCORING_VERSION = "3"
 if db.get_setting(_seed_conn, "scoring_version") != SCORING_VERSION:
-    _active = db.get_setting(_seed_conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN)
-    _camp = _seed_conn.execute(
-        "SELECT * FROM campaigns WHERE slug = ?", (_active,)).fetchone()
-    if _camp:
-        scoring.rescore_all(_seed_conn, _camp)
+    scoring.rescore_everything(_seed_conn)
     db.set_setting(_seed_conn, "scoring_version", SCORING_VERSION)
     _seed_conn.commit()
 _seed_conn.close()
@@ -119,9 +116,13 @@ def logout():
 
 
 def _require_admin():
-    """Return None if the current user is an admin, else a redirect response."""
+    """Return None if the request is allowed to perform admin actions, else a
+    redirect. Allowed when the current user is an admin, or when auth is disabled
+    entirely (local single-user mode has no accounts to be admin of)."""
     user = getattr(g, "user", None)
     if user and user["role"] == "admin":
+        return None
+    if not users.auth_enabled(get_db()):
         return None
     return redirect(url_for("dashboard"))
 
@@ -187,6 +188,190 @@ def users_delete(user_id):
         return redirect(url_for("users_page", error="You can't delete your own account."))
     users.delete_user(conn, user_id)
     return redirect(url_for("users_page"))
+
+
+# ---------------------------------------------------------------- clients
+
+@app.route("/clients")
+def clients_page():
+    conn = get_db()
+    clients = conn.execute(
+        "SELECT c.*, "
+        "  (SELECT COUNT(*) FROM campaigns cp WHERE cp.client_id = c.id) AS campaign_count "
+        "FROM clients c ORDER BY c.enabled DESC, c.name"
+    ).fetchall()
+    return render_template("clients.html", clients=clients,
+                           error=request.args.get("error"))
+
+
+@app.route("/clients/create", methods=["POST"])
+def clients_create():
+    guard = _require_admin()
+    if guard:
+        return guard
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect(url_for("clients_page", error="Client name is required."))
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO clients (name, contact_name, email, phone, notes, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (name, request.form.get("contact_name", "").strip(),
+         request.form.get("email", "").strip(), request.form.get("phone", "").strip(),
+         request.form.get("notes", "").strip(), db.now_iso()),
+    )
+    conn.commit()
+    return redirect(url_for("clients_page"))
+
+
+@app.route("/clients/<int:client_id>/edit", methods=["POST"])
+def clients_edit(client_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    for field in ("name", "contact_name", "email", "phone", "notes"):
+        if field in request.form:
+            val = request.form.get(field, "").strip()
+            if field == "name" and not val:
+                continue
+            conn.execute(f"UPDATE clients SET {field} = ? WHERE id = ?", (val, client_id))
+    conn.commit()
+    return redirect(url_for("clients_page"))
+
+
+@app.route("/clients/<int:client_id>/toggle", methods=["POST"])
+def clients_toggle(client_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    conn.execute("UPDATE clients SET enabled = 1 - enabled WHERE id = ?", (client_id,))
+    conn.commit()
+    return redirect(url_for("clients_page"))
+
+
+# ---------------------------------------------------------------- campaigns
+
+CAMPAIGN_STATUSES = ("active", "paused", "archived")
+
+
+@app.route("/campaigns")
+def campaigns_page():
+    conn = get_db()
+    campaigns = conn.execute(
+        "SELECT cp.*, cl.name AS client_name, "
+        "  (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = cp.id) AS lead_count "
+        "FROM campaigns cp LEFT JOIN clients cl ON cl.id = cp.client_id "
+        "ORDER BY cp.status, cp.name"
+    ).fetchall()
+    clients = conn.execute(
+        "SELECT * FROM clients WHERE enabled = 1 ORDER BY name").fetchall()
+    offers = conn.execute(
+        "SELECT * FROM offers WHERE enabled = 1 ORDER BY audience, name").fetchall()
+    industries = conn.execute(
+        "SELECT * FROM industries WHERE enabled = 1 ORDER BY label").fetchall()
+    return render_template(
+        "campaigns.html", campaigns=campaigns, clients=clients, offers=offers,
+        industries=industries, statuses=CAMPAIGN_STATUSES,
+        countries=COUNTRIES, states_by_country=STATES_BY_COUNTRY,
+        error=request.args.get("error"))
+
+
+@app.route("/campaigns/create", methods=["POST"])
+def campaigns_create():
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    name = request.form.get("name", "").strip()
+    offer_slug = request.form.get("offer_slug", "").strip()
+    offer = db.get_offer(conn, offer_slug)
+    if not name or not offer:
+        return redirect(url_for("campaigns_page", error="Name and a valid offer are required."))
+    try:
+        client_id = int(request.form.get("client_id") or 0) or None
+    except ValueError:
+        client_id = None
+    conn.execute(
+        "INSERT INTO campaigns (name, client_id, offer_slug, audience, industry_slug, "
+        "country, state, city, vici_campaign_id, status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+        (name, client_id, offer_slug, offer["audience"],
+         request.form.get("industry_slug", "").strip(),
+         request.form.get("country", "").strip(), request.form.get("state", "").strip(),
+         request.form.get("city", "").strip(),
+         request.form.get("vici_campaign_id", "").strip(), db.now_iso()),
+    )
+    conn.commit()
+    return redirect(url_for("campaigns_page"))
+
+
+@app.route("/campaigns/<int:campaign_id>/edit", methods=["POST"])
+def campaigns_edit(campaign_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    # Editable text/select fields (offer change also refreshes the cached audience).
+    for field in ("name", "industry_slug", "country", "state", "city", "vici_campaign_id"):
+        if field in request.form:
+            conn.execute(f"UPDATE campaigns SET {field} = ? WHERE id = ?",
+                         (request.form.get(field, "").strip(), campaign_id))
+    if "client_id" in request.form:
+        try:
+            cid = int(request.form.get("client_id") or 0) or None
+        except ValueError:
+            cid = None
+        conn.execute("UPDATE campaigns SET client_id = ? WHERE id = ?", (cid, campaign_id))
+    offer_slug = request.form.get("offer_slug", "").strip()
+    if offer_slug:
+        offer = db.get_offer(conn, offer_slug)
+        if offer:
+            conn.execute("UPDATE campaigns SET offer_slug = ?, audience = ? WHERE id = ?",
+                         (offer_slug, offer["audience"], campaign_id))
+    status = request.form.get("status", "").strip()
+    if status in CAMPAIGN_STATUSES:
+        conn.execute("UPDATE campaigns SET status = ? WHERE id = ?", (status, campaign_id))
+    conn.commit()
+    # Re-rank this campaign's leads if its offer may have changed.
+    camp = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    if camp:
+        scoring.rescore_campaign(conn, camp)
+    return redirect(url_for("campaign_detail", campaign_id=campaign_id))
+
+
+@app.route("/campaigns/<int:campaign_id>")
+def campaign_detail(campaign_id):
+    conn = get_db()
+    campaign = conn.execute(
+        "SELECT cp.*, cl.name AS client_name FROM campaigns cp "
+        "LEFT JOIN clients cl ON cl.id = cp.client_id WHERE cp.id = ?", (campaign_id,)
+    ).fetchone()
+    if not campaign:
+        return redirect(url_for("campaigns_page", error="Campaign not found."))
+    offer = db.offer_for_campaign(conn, campaign)
+    # Lead lifecycle for this campaign: counts by status.
+    status_counts = {r["status"]: r["n"] for r in conn.execute(
+        "SELECT status, COUNT(*) AS n FROM leads WHERE campaign_id = ? GROUP BY status",
+        (campaign_id,))}
+    # Pull runs (generation cycles) for this campaign.
+    runs = conn.execute(
+        "SELECT * FROM pull_runs WHERE campaign_id = ? ORDER BY id DESC LIMIT 50",
+        (campaign_id,)).fetchall()
+    # Redial cycle: not-reached leads currently queued, via the VICIdial bridge.
+    requeue_rows = conn.execute(
+        "SELECT r.*, l.business_name, l.phone FROM requeue_leads r "
+        "JOIN leads l ON l.id = r.lead_id WHERE l.campaign_id = ? "
+        "ORDER BY r.updated_at DESC LIMIT 100", (campaign_id,)).fetchall()
+    clients = conn.execute("SELECT * FROM clients WHERE enabled = 1 ORDER BY name").fetchall()
+    offers = conn.execute("SELECT * FROM offers WHERE enabled = 1 ORDER BY audience, name").fetchall()
+    industries = conn.execute("SELECT * FROM industries WHERE enabled = 1 ORDER BY label").fetchall()
+    return render_template(
+        "campaign_detail.html", campaign=campaign, offer=offer,
+        status_counts=status_counts, statuses=db.LEAD_STATUSES, runs=runs,
+        requeue_rows=requeue_rows, clients=clients, offers=offers,
+        industries=industries, campaign_statuses=CAMPAIGN_STATUSES)
 
 
 def get_db():
@@ -309,19 +494,30 @@ def dashboard():
     for lead in leads:
         counts[lead["status"]] = counts.get(lead["status"], 0) + 1
     total_leads = conn.execute("SELECT COUNT(*) AS n FROM leads").fetchone()["n"]
+    # Campaigns (client engagements) drive the dashboard now — industry + geo are
+    # attributes of the chosen campaign, so they can't be mismatched.
     campaigns = conn.execute(
-        "SELECT * FROM campaigns WHERE enabled = 1 ORDER BY audience, is_preset DESC, name"
+        "SELECT cp.*, cl.name AS client_name FROM campaigns cp "
+        "LEFT JOIN clients cl ON cl.id = cp.client_id "
+        "WHERE cp.status != 'archived' ORDER BY cp.status, cp.name"
     ).fetchall()
-    active_slug = db.get_setting(conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN)
-    active_campaign = conn.execute(
-        "SELECT * FROM campaigns WHERE slug = ?", (active_slug,)
-    ).fetchone()
+    sel_id = request.args.get("campaign_id") or (batch["campaign_id"] if batch else None)
+    selected_campaign = None
+    if sel_id:
+        selected_campaign = conn.execute(
+            "SELECT cp.*, cl.name AS client_name FROM campaigns cp "
+            "LEFT JOIN clients cl ON cl.id = cp.client_id WHERE cp.id = ?", (sel_id,)
+        ).fetchone()
+    # The offer drives goal/audience-dependent UI (appointment button, B2C labels);
+    # it's the selected campaign's offer, or the default offer when none is chosen.
+    active_campaign = db.offer_for_campaign(conn, selected_campaign)
     return render_template(
         "dashboard.html", leads=leads, batch=batch, run_id=run_id,
         industries=industries, statuses=db.LEAD_STATUSES, counts=counts,
         current_status=request.args.get("status", ""),
         total_leads=total_leads,
         campaigns=campaigns, active_campaign=active_campaign,
+        selected_campaign=selected_campaign,
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         default_target=db.get_setting(conn, "target_leads_per_day", "100"),
         countries=COUNTRIES, states_by_country=STATES_BY_COUNTRY,
@@ -356,11 +552,11 @@ def settings():
     chains = {}
     for row in conn.execute("SELECT * FROM chains ORDER BY name"):
         chains.setdefault(row["industry_id"], []).append(row)
-    campaigns = conn.execute("SELECT * FROM campaigns ORDER BY is_preset DESC, name").fetchall()
+    offers = conn.execute("SELECT * FROM offers ORDER BY is_preset DESC, name").fetchall()
     return render_template(
         "settings.html", cities=cities, industries=industries, chains=chains,
-        campaigns=campaigns, market_types=db.MARKET_TYPES,
-        active_campaign=db.get_setting(conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN),
+        offers=offers, market_types=db.MARKET_TYPES,
+        active_offer=db.get_setting(conn, "active_campaign", db.DEFAULT_OFFER),
         target=db.get_setting(conn, "target_leads_per_day", "100"),
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         contact_enrichment=db.get_setting(conn, "contact_enrichment", "1") == "1",
@@ -545,6 +741,69 @@ def run_requeue_now(day=None, campaign=None, dry_run=False):
         return summary
     finally:
         conn.close()
+
+
+# How far back the nightly job will reach to recover missed days. Bounds the work
+# so a long outage (or a fresh deploy) can't trigger a huge historical sweep.
+BACKFILL_MAX_DAYS = 14
+
+
+def _days_to_backfill(last_day, today, cap=BACKFILL_MAX_DAYS):
+    """Days (oldest→newest, 'YYYY-MM-DD') to process this run: from the day after
+    the last successful run through today, clamped to at most `cap` days back. On
+    the very first run (no last_day) this is just [today] — no historical sweep."""
+    fmt = "%Y-%m-%d"
+    today_d = datetime.strptime(today, fmt).date()
+    start = today_d
+    if last_day:
+        try:
+            start = datetime.strptime(last_day, fmt).date() + timedelta(days=1)
+        except ValueError:
+            start = today_d
+    earliest = today_d - timedelta(days=cap)
+    start = min(max(start, earliest), today_d)
+    days, d = [], start
+    while d <= today_d:
+        days.append(d.strftime(fmt))
+        d += timedelta(days=1)
+    return days
+
+
+def run_requeue_backfill():
+    """Scheduled entry point. Processes today PLUS any days missed since the last
+    successful run, so a night the job didn't fire (deploy, container asleep,
+    VICIdial briefly unreachable) never costs us paid-for leads. process() is
+    idempotent, so re-touching an already-done day is a no-op."""
+    today = requeue.today_est()
+    conn = db.connect()
+    try:
+        last = db.get_setting(conn, "requeue_last_success_day", "")
+    finally:
+        conn.close()
+    days = _days_to_backfill(last, today)
+
+    results = [run_requeue_now(day=d, dry_run=False) for d in days]
+    ok = [r for r in results if "error" not in r]
+    if not ok:
+        return results  # VICIdial unreachable — don't advance the marker; retry next run
+
+    conn = db.connect()
+    try:
+        db.set_setting(conn, "requeue_last_success_day", today)
+        missed = [d for d in days if d != today]
+        if missed:
+            recovered = sum(r.get("requeued", 0) for r in ok if r.get("day") in missed)
+            db.add_alert(
+                conn,
+                f"Backfill recovered {len(missed)} missed day(s) "
+                f"({missed[0]}…{missed[-1]}) — {recovered} not-reached leads re-served.",
+                kind="requeue_backfill", link="/requeue",
+            )
+        db.set_setting(conn, "requeue_last_run", db.now_iso())
+        conn.commit()
+    finally:
+        conn.close()
+    return results
 
 
 @app.route("/requeue")
@@ -778,8 +1037,9 @@ def api_intake():
     conn = get_db()
     campaign = None
     if data.get("campaign"):
+        # 'campaign' here names an OFFER slug (scoring profile) for this lead.
         campaign = conn.execute(
-            "SELECT * FROM campaigns WHERE slug = ?", (data["campaign"],)
+            "SELECT * FROM offers WHERE slug = ?", (data["campaign"],)
         ).fetchone()
     result = leads_intake.intake_one(conn, payload, source, campaign=campaign)
     conn.commit()
@@ -856,10 +1116,10 @@ def set_lead_notes(lead_id):
 
 # ---------------------------------------------------------------- pull control
 
-def _pull_worker(run_id, industries, target, api_key, location):
+def _pull_worker(run_id, industries, target, api_key, location, campaign_id=None):
     try:
         pipeline.run_pull(industries, target, api_key, location=location,
-                          run_id=run_id, log=lambda *_: None)
+                          run_id=run_id, campaign_id=campaign_id, log=lambda *_: None)
     except Exception:
         pass  # error is already recorded on the pull_runs row
     finally:
@@ -874,9 +1134,27 @@ def start_pull():
         return jsonify({"error": "OUTSCRAPER_API_KEY is not set (env var or .env file)"}), 400
 
     conn = get_db()
-    industries = payload.get("industries") or [
-        payload.get("industry") or db.get_setting(conn, "default_industry", "hvac")
-    ]
+
+    # A pull runs for one campaign (client engagement) when a campaign_id is given:
+    # its target industry + geography come FROM the campaign, so they can't be
+    # mismatched. Without one, it's an ad-hoc pull (campaign_id NULL, default offer).
+    campaign_id = payload.get("campaign_id")
+    camp = None
+    if campaign_id:
+        camp = conn.execute(
+            "SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        if not camp:
+            return jsonify({"error": "Unknown campaign"}), 400
+        if not (camp["industry_slug"] or "").strip():
+            return jsonify({"error": "This campaign has no target industry. "
+                            "B2C campaigns receive leads via Import/intake, not Maps pulls."}), 400
+
+    if camp:
+        industries = [camp["industry_slug"]]
+    else:
+        industries = payload.get("industries") or [
+            payload.get("industry") or db.get_setting(conn, "default_industry", "hvac")
+        ]
     if not isinstance(industries, list) or not all(isinstance(s, str) for s in industries):
         return jsonify({"error": "industries must be a list of slugs"}), 400
     try:
@@ -886,9 +1164,12 @@ def start_pull():
     if target < 1:
         return jsonify({"error": "Target must be at least 1"}), 400
 
-    # Location entered on the dashboard (city/state/country). Remember it so the
-    # inputs pre-fill next time.
-    loc = payload.get("location") or {}
+    # Location: from the campaign when campaign-scoped, else what was typed on the
+    # dashboard (remembered so the inputs pre-fill next time).
+    if camp:
+        loc = {"city": camp["city"], "state": camp["state"], "country": camp["country"]}
+    else:
+        loc = payload.get("location") or {}
     location = {"city": (loc.get("city") or "").strip(),
                 "state": (loc.get("state") or "").strip(),
                 "country": (loc.get("country") or "").strip()}
@@ -907,14 +1188,15 @@ def start_pull():
         return jsonify({"error": "A pull is already running"}), 409
 
     cur = conn.execute(
-        "INSERT INTO pull_runs (started_at, industry, target) VALUES (?, ?, ?)",
-        (db.now_iso(), ",".join(industries), target),
+        "INSERT INTO pull_runs (started_at, industry, target, campaign_id) VALUES (?, ?, ?, ?)",
+        (db.now_iso(), ",".join(industries), target, camp["id"] if camp else None),
     )
     conn.commit()
     run_id = cur.lastrowid
 
     threading.Thread(
-        target=_pull_worker, args=(run_id, industries, target, api_key, location),
+        target=_pull_worker,
+        args=(run_id, industries, target, api_key, location, camp["id"] if camp else None),
         daemon=True,
     ).start()
     return jsonify({"ok": True, "run_id": run_id})
@@ -1098,15 +1380,16 @@ def delete_chain(chain_id):
 
 @app.route("/settings/campaign/activate", methods=["POST"])
 def activate_campaign():
-    """Switch the active campaign and re-score every lead under its rules —
-    the same lead pool is instantly re-ranked for the new offer, no re-pull."""
+    """Set the DEFAULT offer (used to score leads with no campaign) and re-rank.
+    Per-campaign leads keep their own campaign's offer; only unassigned leads
+    follow this default."""
     slug = request.form.get("slug", "").strip()
     conn = get_db()
-    campaign = conn.execute("SELECT * FROM campaigns WHERE slug = ?", (slug,)).fetchone()
-    if campaign:
+    offer = conn.execute("SELECT * FROM offers WHERE slug = ?", (slug,)).fetchone()
+    if offer:
         db.set_setting(conn, "active_campaign", slug)
         conn.commit()
-        scoring.rescore_all(conn, campaign)
+        scoring.rescore_everything(conn)
     next_page = request.form.get("next", "settings")
     return redirect(url_for("dashboard" if next_page == "dashboard" else "settings"))
 
@@ -1123,12 +1406,12 @@ def add_campaign():
         slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "campaign"
         conn = get_db()
         base_row = conn.execute(
-            "SELECT rules, site_check FROM campaigns WHERE slug = ?", (base,)
+            "SELECT rules, site_check FROM offers WHERE slug = ?", (base,)
         ).fetchone()
         rules = base_row["rules"] if base_row else "{}"
         site_check = base_row["site_check"] if base_row else 0
         conn.execute(
-            "INSERT OR IGNORE INTO campaigns (slug, name, audience, goal, rules, is_preset, site_check) "
+            "INSERT OR IGNORE INTO offers (slug, name, audience, goal, rules, is_preset, site_check) "
             "VALUES (?, ?, ?, ?, ?, 0, ?)",
             (slug, name, audience if audience in db.MARKET_TYPES else "b2b",
              goal if goal in ("close", "appointment") else "close", rules, site_check),
@@ -1145,20 +1428,20 @@ def edit_campaign(campaign_id):
     goal = request.form.get("goal", "").strip()
     conn = get_db()
     if name:
-        conn.execute("UPDATE campaigns SET name = ? WHERE id = ?", (name, campaign_id))
+        conn.execute("UPDATE offers SET name = ? WHERE id = ?", (name, campaign_id))
     if audience in db.MARKET_TYPES:
-        conn.execute("UPDATE campaigns SET audience = ? WHERE id = ?", (audience, campaign_id))
+        conn.execute("UPDATE offers SET audience = ? WHERE id = ?", (audience, campaign_id))
     if goal in ("close", "appointment"):
-        conn.execute("UPDATE campaigns SET goal = ? WHERE id = ?", (goal, campaign_id))
+        conn.execute("UPDATE offers SET goal = ? WHERE id = ?", (goal, campaign_id))
     conn.commit()
     return redirect(url_for("settings"))
 
 
 @app.route("/settings/campaigns/<int:campaign_id>/toggle", methods=["POST"])
 def toggle_campaign(campaign_id):
-    """Activate/deactivate a campaign (hides it from the dashboard picker)."""
+    """Enable/disable an offer (hides it from the offer pickers)."""
     conn = get_db()
-    conn.execute("UPDATE campaigns SET enabled = 1 - enabled WHERE id = ?", (campaign_id,))
+    conn.execute("UPDATE offers SET enabled = 1 - enabled WHERE id = ?", (campaign_id,))
     conn.commit()
     return redirect(url_for("settings"))
 
@@ -1166,12 +1449,12 @@ def toggle_campaign(campaign_id):
 @app.route("/settings/campaigns/<int:campaign_id>/delete", methods=["POST"])
 def delete_campaign(campaign_id):
     conn = get_db()
-    row = conn.execute("SELECT slug, is_preset FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    row = conn.execute("SELECT slug, is_preset FROM offers WHERE id = ?", (campaign_id,)).fetchone()
     if row and not row["is_preset"]:
-        # Don't leave the active pointer dangling.
+        # Don't leave the default-offer pointer dangling.
         if db.get_setting(conn, "active_campaign") == row["slug"]:
-            db.set_setting(conn, "active_campaign", db.DEFAULT_ACTIVE_CAMPAIGN)
-        conn.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
+            db.set_setting(conn, "active_campaign", db.DEFAULT_OFFER)
+        conn.execute("DELETE FROM offers WHERE id = ?", (campaign_id,))
         conn.commit()
     return redirect(url_for("settings"))
 
@@ -1213,7 +1496,7 @@ def _start_scheduler():
         conn.close()
         hour, _, minute = run_time.partition(":")
         sched = BackgroundScheduler(timezone=ZoneInfo("America/New_York"))
-        sched.add_job(lambda: run_requeue_now(dry_run=False),
+        sched.add_job(run_requeue_backfill,
                       CronTrigger(hour=int(hour or 23), minute=int(minute or 30)),
                       id="requeue_daily", replace_existing=True)
         sched.start()
