@@ -33,10 +33,11 @@
             <a href="{{ lead['facebook'] }}" target="_blank" rel="noopener">&#9755; fb</a>
           {% endif %}
         </div>
-        {% if lead['contact'] or lead['email'] %}
+        {% if lead['contact'] or lead['email'] or lead['direct_phone'] %}
         <div class="small contact-line">
-          {% if lead['contact'] %}&#128100; {{ lead['contact'] }}{% endif %}
-          {% if lead['email'] %}&#9993; {{ lead['email'] }}{% endif %}
+          {% if lead['contact'] %}&#128100; {{ lead['contact'] }}{% if lead['contact_title'] %} <span class="dim">({{ lead['contact_title'] }})</span>{% endif %}{% endif %}
+          {% if lead['direct_phone'] %} &#128222; <a href="tel:{{ lead['direct_phone'] }}">{{ lead['direct_phone'] }}</a>{% endif %}
+          {% if lead['email'] %} &#9993; {{ lead['email'] }}{% endif %}
         </div>
         {% endif %}
       </td>

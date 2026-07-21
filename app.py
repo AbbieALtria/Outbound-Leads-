@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 
+import contacts
 import db
 import dialer_import
 import dnc
@@ -528,6 +529,7 @@ def dashboard():
         last_state=db.get_setting(conn, "last_state", ""),
         last_country=db.get_setting(conn, "last_country", "United States"),
         api_key_set=bool(pipeline.get_api_key()),
+        apollo_enabled=contacts.enabled(),
     )
 
 
@@ -563,6 +565,9 @@ def settings():
         contact_enrichment=db.get_setting(conn, "contact_enrichment", "1") == "1",
         phone_validation=db.get_setting(conn, "phone_validation", "0") == "1",
         drop_voip_export=db.get_setting(conn, "drop_voip_export", "0") == "1",
+        apollo_enabled=contacts.enabled(),
+        enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
+        enrich_reveal_phone=db.get_setting(conn, "enrich_reveal_phone", "0") == "1",
         api_key_set=bool(pipeline.get_api_key()),
     )
 
@@ -1295,6 +1300,60 @@ def verify_phones_status():
     return jsonify({"running": running})
 
 
+# --- on-demand contact enrichment (Apollo) — fills decision-maker name/title ---
+
+_enrich_lock = threading.Lock()
+
+
+def _enrich_worker(lead_ids, reveal_email, reveal_phone):
+    try:
+        conn = db.connect()
+        rows = conn.execute(
+            f"SELECT id, website FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
+            lead_ids,
+        ).fetchall()
+        contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
+                              reveal_phone=reveal_phone, log=lambda *_: None)
+        conn.close()
+    except Exception:
+        pass
+    finally:
+        _enrich_lock.release()
+
+
+@app.route("/api/enrich_contacts", methods=["POST"])
+def enrich_contacts():
+    """Enrich the currently filtered leads that have a website with a decision-maker
+    name/title (+ email/direct-dial per the reveal settings). Background; poll
+    /api/enrich_contacts/status. Free for names/titles; reveal spends Apollo credits."""
+    if not contacts.enabled():
+        return jsonify({"error": "APOLLO_API_KEY is not set — add it in Railway → "
+                        "Variables to enable contact enrichment."}), 400
+    conn = get_db()
+    args = request.json or {}
+    clause, params = lead_filters(args)
+    only_missing = args.get("only_missing", True)
+    extra = " AND website != ''" + (" AND contact = ''" if only_missing else "")
+    sql = f"SELECT id FROM leads {clause or 'WHERE 1=1'}{extra}"
+    lead_ids = [r["id"] for r in conn.execute(sql, params)]
+    if not lead_ids:
+        return jsonify({"error": "No leads with a website need enrichment in this view"}), 400
+
+    reveal_email = db.get_setting(conn, "enrich_reveal_email", "1") == "1"
+    reveal_phone = db.get_setting(conn, "enrich_reveal_phone", "0") == "1"
+    if not _enrich_lock.acquire(blocking=False):
+        return jsonify({"error": "An enrichment run is already in progress"}), 409
+    threading.Thread(
+        target=_enrich_worker, args=(lead_ids, reveal_email, reveal_phone), daemon=True
+    ).start()
+    return jsonify({"ok": True, "count": len(lead_ids)})
+
+
+@app.route("/api/enrich_contacts/status")
+def enrich_contacts_status():
+    return jsonify({"running": _enrich_lock.locked()})
+
+
 # ---------------------------------------------------------------- settings CRUD
 
 @app.route("/settings/cities/add", methods=["POST"])
@@ -1492,6 +1551,10 @@ def save_general_settings():
                    "1" if request.form.get("phone_validation") else "0")
     db.set_setting(conn, "drop_voip_export",
                    "1" if request.form.get("drop_voip_export") else "0")
+    db.set_setting(conn, "enrich_reveal_email",
+                   "1" if request.form.get("enrich_reveal_email") else "0")
+    db.set_setting(conn, "enrich_reveal_phone",
+                   "1" if request.form.get("enrich_reveal_phone") else "0")
     conn.commit()
     return redirect(url_for("settings"))
 

@@ -322,3 +322,54 @@ if (verifyBtn) {
     }
   });
 }
+
+// ---- enrich contacts button (Apollo) ----
+const enrichBtn = document.getElementById("enrich-btn");
+if (enrichBtn) {
+  const eresult = document.getElementById("enrich-result");
+
+  const pollEnrich = async () => {
+    let s;
+    try {
+      s = await (await fetch("/api/enrich_contacts/status")).json();
+    } catch {
+      setTimeout(pollEnrich, 3000);
+      return;
+    }
+    if (s.running) {
+      setTimeout(pollEnrich, 2000);
+    } else {
+      enrichBtn.disabled = false;
+      enrichBtn.textContent = "Enrich contacts";
+      eresult.className = "pull-result ok";
+      eresult.textContent = "Contact enrichment finished.";
+      setTimeout(() => location.reload(), 1200);
+    }
+  };
+
+  enrichBtn.addEventListener("click", async () => {
+    if (!confirm("Find the decision-maker for this pull's leads (that have a website) " +
+                 "via Apollo? Names & titles are free; email/direct-dial reveal spends " +
+                 "Apollo credits per lead (set in Settings).")) {
+      return;
+    }
+    enrichBtn.disabled = true;
+    enrichBtn.textContent = "Enriching…";
+    eresult.hidden = false;
+    eresult.className = "pull-result";
+    eresult.textContent = "Looking up decision-makers…";
+    try {
+      const r = await postJSON("/api/enrich_contacts", {
+        run_id: enrichBtn.dataset.run_id || "",
+        only_missing: true,
+      });
+      eresult.textContent = `Enriching ${r.count} leads…`;
+      pollEnrich();
+    } catch (e) {
+      enrichBtn.disabled = false;
+      enrichBtn.textContent = "Enrich contacts";
+      eresult.className = "pull-result err";
+      eresult.textContent = e.message;
+    }
+  });
+}

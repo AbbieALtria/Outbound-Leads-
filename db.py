@@ -233,6 +233,11 @@ DEFAULT_SETTINGS = {
     "drop_voip_export": "0",
     # Daily requeue job time, EST (HH:MM). Reads VICIdial dispositions.
     "requeue_run_time": "23:30",
+    # Apollo B2B contact enrichment (decision-maker name/title/email/direct dial).
+    # Name + title are free; email reveal = 1 credit, phone reveal = 8 credits each,
+    # so reveal_phone is OFF by default. Enrichment only runs when APOLLO_API_KEY is set.
+    "enrich_reveal_email": "1",
+    "enrich_reveal_phone": "0",
     # Offer used to score leads with no campaign (legacy/unassigned). The key name
     # is historical ("active_campaign"); it now holds the default OFFER slug.
     "active_campaign": DEFAULT_OFFER,
@@ -241,7 +246,9 @@ DEFAULT_SETTINGS = {
 # Columns added after the first release; init_db() adds them to old databases.
 LEAD_EXTRA_COLUMNS = {
     "email": "TEXT NOT NULL DEFAULT ''",
-    "contact": "TEXT NOT NULL DEFAULT ''",       # decision-maker name/title if found
+    "contact": "TEXT NOT NULL DEFAULT ''",       # decision-maker name if found (Apollo)
+    "contact_title": "TEXT NOT NULL DEFAULT ''", # their job title (e.g. IT Manager)
+    "direct_phone": "TEXT NOT NULL DEFAULT ''",  # decision-maker direct dial / mobile (revealed)
     "postcode": "TEXT NOT NULL DEFAULT ''",
     "search_query": "TEXT NOT NULL DEFAULT ''",  # exact query the lead came from
     "phone_type": "TEXT NOT NULL DEFAULT ''",    # fixed line / mobile / voip / invalid

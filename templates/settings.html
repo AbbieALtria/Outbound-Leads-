@@ -29,6 +29,18 @@
         <input type="checkbox" name="drop_voip_export" {{ 'checked' if drop_voip_export }}>
         Drop VOIP &amp; toll-free numbers from dial exports (better B2B connect rate)
       </label>
+      <hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">
+      <p class="dim small" style="margin:0 0 4px;">Apollo contact enrichment (decision-maker) —
+        {% if apollo_enabled %}<strong style="color:var(--green)">connected</strong>{% else %}set <code>APOLLO_API_KEY</code> in Railway to enable{% endif %}.
+        Name &amp; title are free; reveals cost Apollo credits.</p>
+      <label class="chk-row">
+        <input type="checkbox" name="enrich_reveal_email" {{ 'checked' if enrich_reveal_email }}>
+        Reveal work email when enriching — <strong>1 Apollo credit</strong> per lead
+      </label>
+      <label class="chk-row">
+        <input type="checkbox" name="enrich_reveal_phone" {{ 'checked' if enrich_reveal_phone }}>
+        Reveal direct dial / mobile when enriching — <strong>8 Apollo credits</strong> per lead (bypasses the gatekeeper)
+      </label>
       <button type="submit" class="primary">Save</button>
     </form>
     <div class="api-status">
