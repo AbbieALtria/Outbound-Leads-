@@ -97,7 +97,7 @@
       <span class="pill">Current pull</span>
       <strong>{{ batch['industry'].replace('_', ' ').replace(',', ', ') }}</strong>
       — {{ leads|length }} lead{{ 's' if leads|length != 1 }}
-      <span class="dim small">· {{ batch['started_at'][:16].replace('T', ' ') }}</span>
+      <span class="dim small">· {{ batch['started_at'][:16].replace('T', ' ') }}{% if batch_user %} · by <strong>{{ batch_user }}</strong>{% endif %}</span>
     {% elif run_id %}
       <strong>Current pull</strong> — {{ leads|length }} leads
     {% else %}

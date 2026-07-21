@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Activity — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card wide">
+  <h2>Activity</h2>
+  <p class="dim small">Every lead pull — who ran it, when, for which campaign, what industry, and how many leads. Click a row to see exactly those leads.</p>
+</section>
+
+{% if runs %}
+<div class="table-wrap">
+<table class="leads">
+  <thead>
+    <tr><th>When</th><th>User</th><th>Campaign</th><th>Industry</th><th>Leads</th><th>Status</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for r in runs %}
+    <tr>
+      <td class="nowrap dim small">{{ r['started_at'][:16].replace('T',' ') }}</td>
+      <td class="nowrap">{% if r['username'] %}<strong>{{ r['username'] }}</strong>{% else %}<span class="dim">system</span>{% endif %}</td>
+      <td class="nowrap">{% if r['campaign_name'] %}{{ r['client_name'] or 'No client' }} · {{ r['campaign_name'] }}{% else %}<span class="dim">ad-hoc</span>{% endif %}</td>
+      <td class="nowrap small">{{ (r['industry'] or '').replace('_',' ').replace(',', ', ') or '—' }}</td>
+      <td><strong>{{ r['lead_count'] }}</strong>{% if r['target'] %}<span class="dim small"> / {{ r['target'] }}</span>{% endif %}</td>
+      <td class="nowrap">
+        {% if r['status'] == 'done' %}<span class="badge badge-ok">done</span>
+        {% elif r['status'] == 'running' %}<span class="badge">running</span>
+        {% elif r['status'] == 'error' %}<span class="badge badge-hot">error</span>
+        {% else %}<span class="badge">{{ r['status'] or '—' }}</span>{% endif %}
+      </td>
+      <td class="nowrap">{% if r['lead_count'] %}<a class="button" href="{{ url_for('history', run_id=r['id']) }}">View leads</a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No pulls yet.</p>
+{% endif %}
+
+{% endblock %}

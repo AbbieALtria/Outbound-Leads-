@@ -19,6 +19,7 @@
     <a href="{{ url_for('requeue_page') }}" title="Nightly redial lists rebuilt from VICIdial dispositions" class="{{ 'active' if request.endpoint == 'requeue_page' }}">Requeue{% if alert_count %} <span class="nav-badge">{{ alert_count }}</span>{% endif %}</a>
     <a href="{{ url_for('settings') }}" title="Cities, industries, offers, enrichment toggles" class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
     {% if current_user and current_user['role'] == 'admin' %}
+    <a href="{{ url_for('activity_page') }}" title="Who pulled what, when — audit log" class="{{ 'active' if request.endpoint == 'activity_page' }}">Activity</a>
     <a href="{{ url_for('users_page') }}" title="Users, per-agent lead caps, and campaign access" class="{{ 'active' if request.endpoint == 'users_page' }}">Users</a>
     {% endif %}
     <a href="{{ url_for('help_page') }}" title="How the system works" class="{{ 'active' if request.endpoint == 'help_page' }}">Help</a>

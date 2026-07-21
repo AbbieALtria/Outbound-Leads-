@@ -52,6 +52,16 @@
         {% endfor %}
       </select>
     </label>
+    {% if user_list %}
+    <label>User
+      <select name="user_id">
+        <option value="">any user</option>
+        {% for u in user_list %}
+        <option value="{{ u['id'] }}" {{ 'selected' if f.get('user_id') == u['id']|string }}>{{ u['username'] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% endif %}
     <label>Search <input type="text" name="q" value="{{ f.get('q', '') }}" placeholder="name or phone"></label>
     <button type="submit">Filter</button>
     <a class="button" href="{{ url_for('history') }}">Clear</a>

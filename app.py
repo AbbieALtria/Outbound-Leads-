@@ -127,6 +127,25 @@ def help_page():
     return render_template("help.html", apollo_enabled=contacts.enabled())
 
 
+@app.route("/activity")
+def activity_page():
+    """Admin audit view: every pull — who, when, campaign, industry, count."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    runs = conn.execute(
+        "SELECT r.*, u.username, cp.name AS campaign_name, cl.name AS client_name, "
+        "  (SELECT COUNT(*) FROM leads l WHERE l.run_id = r.id) AS lead_count "
+        "FROM pull_runs r "
+        "LEFT JOIN users u ON u.id = r.user_id "
+        "LEFT JOIN campaigns cp ON cp.id = r.campaign_id "
+        "LEFT JOIN clients cl ON cl.id = cp.client_id "
+        "ORDER BY r.id DESC LIMIT 200"
+    ).fetchall()
+    return render_template("activity.html", runs=runs)
+
+
 @app.route("/change-password", methods=["GET", "POST"])
 def change_password():
     """Any signed-in user sets their OWN password. Forced on first login / after an
@@ -473,6 +492,9 @@ def lead_filters(args):
     if args.get("run_id"):
         where.append("run_id = ?")
         params.append(args["run_id"])
+    if args.get("user_id"):
+        where.append("run_id IN (SELECT id FROM pull_runs WHERE user_id = ?)")
+        params.append(args["user_id"])
     if args.get("date"):
         where.append("pulled_date = ?")
         params.append(args["date"])
@@ -555,8 +577,13 @@ def dashboard():
         run_id = row["r"]
 
     batch = None
+    batch_user = ""
     if run_id:
         batch = conn.execute("SELECT * FROM pull_runs WHERE id = ?", (run_id,)).fetchone()
+        if batch and batch["user_id"]:
+            row = conn.execute("SELECT username FROM users WHERE id = ?",
+                               (batch["user_id"],)).fetchone()
+            batch_user = row["username"] if row else ""
 
     # With no run_id at all (fresh DB, nothing pulled) show nothing on the dashboard.
     if run_id:
@@ -610,7 +637,7 @@ def dashboard():
     # it's the selected campaign's offer, or the default offer when none is chosen.
     active_campaign = db.offer_for_campaign(conn, selected_campaign)
     return render_template(
-        "dashboard.html", leads=leads, batch=batch, run_id=run_id,
+        "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
         industries=industries, statuses=db.LEAD_STATUSES, counts=counts,
         current_status=request.args.get("status", ""),
         total_leads=total_leads,
@@ -637,10 +664,14 @@ def history():
     distinct = lambda col: [r[col] for r in conn.execute(
         f"SELECT DISTINCT {col} FROM leads WHERE {col} != '' ORDER BY {col}")]
     industries = conn.execute("SELECT * FROM industries ORDER BY label").fetchall()
+    # Admins can filter by the user who generated the leads.
+    is_admin = getattr(g, "user", None) and g.user["role"] == "admin"
+    user_list = users.list_users(conn) if is_admin else []
     return render_template(
         "history.html", leads=leads,
         countries=distinct("country"), states=distinct("state"), cities=distinct("city"),
         industries=industries, statuses=db.LEAD_STATUSES, f=request.args,
+        user_list=user_list,
     )
 
 
