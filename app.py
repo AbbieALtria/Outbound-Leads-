@@ -1117,10 +1117,12 @@ def set_lead_notes(lead_id):
 
 # ---------------------------------------------------------------- pull control
 
-def _pull_worker(run_id, industries, target, api_key, location, campaign_id=None):
+def _pull_worker(run_id, industries, target, api_key, location, campaign_id=None,
+                 locations=None):
     try:
         pipeline.run_pull(industries, target, api_key, location=location,
-                          run_id=run_id, campaign_id=campaign_id, log=lambda *_: None)
+                          locations=locations, run_id=run_id,
+                          campaign_id=campaign_id, log=lambda *_: None)
     except Exception:
         pass  # error is already recorded on the pull_runs row
     finally:
@@ -1136,9 +1138,10 @@ def start_pull():
 
     conn = get_db()
 
-    # A pull runs for one campaign (client engagement) when a campaign_id is given:
-    # its target industry + geography come FROM the campaign, so they can't be
-    # mismatched. Without one, it's an ad-hoc pull (campaign_id NULL, default offer).
+    # A pull can be tagged to a campaign (client engagement) so its leads attribute
+    # to that client and share its VICIdial redial bridge. Industry + geography are
+    # chosen on the dashboard at pull time (the campaign only PRE-FILLS them), so one
+    # campaign can sweep many cities/industries over time.
     campaign_id = payload.get("campaign_id")
     camp = None
     if campaign_id:
@@ -1146,18 +1149,15 @@ def start_pull():
             "SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
         if not camp:
             return jsonify({"error": "Unknown campaign"}), 400
-        if not (camp["industry_slug"] or "").strip():
-            return jsonify({"error": "This campaign has no target industry. "
-                            "B2C campaigns receive leads via Import/intake, not Maps pulls."}), 400
 
-    if camp:
-        industries = [camp["industry_slug"]]
-    else:
-        industries = payload.get("industries") or [
-            payload.get("industry") or db.get_setting(conn, "default_industry", "hvac")
-        ]
+    industries = payload.get("industries") or [
+        payload.get("industry") or db.get_setting(conn, "default_industry", "hvac")
+    ]
     if not isinstance(industries, list) or not all(isinstance(s, str) for s in industries):
         return jsonify({"error": "industries must be a list of slugs"}), 400
+    industries = [s.strip() for s in industries if s.strip()]
+    if not industries:
+        return jsonify({"error": "Choose at least one industry to pull."}), 400
     try:
         target = int(payload.get("target") or db.get_setting(conn, "target_leads_per_day", "100"))
     except ValueError:
@@ -1165,21 +1165,29 @@ def start_pull():
     if target < 1:
         return jsonify({"error": "Target must be at least 1"}), 400
 
-    # Location: from the campaign when campaign-scoped, else what was typed on the
-    # dashboard (remembered so the inputs pre-fill next time).
-    if camp:
-        loc = {"city": camp["city"], "state": camp["state"], "country": camp["country"]}
-    else:
-        loc = payload.get("location") or {}
-    location = {"city": (loc.get("city") or "").strip(),
-                "state": (loc.get("state") or "").strip(),
-                "country": (loc.get("country") or "").strip()}
-    if not (location["city"] or location["state"]):
-        # No location typed: only allowed if there are saved cities to fall back on.
+    # Location: a multi-select list from the dashboard, or a single typed location,
+    # else fall back to saved cities. All entered on the dashboard now (never locked
+    # to the campaign), so one campaign can sweep several cities in one run.
+    def _clean_loc(l):
+        return {"city": (l.get("city") or "").strip(),
+                "state": (l.get("state") or "").strip(),
+                "country": (l.get("country") or "").strip()}
+
+    raw_locs = payload.get("locations")
+    locations = None
+    if isinstance(raw_locs, list):
+        locations = [_clean_loc(l) for l in raw_locs
+                     if isinstance(l, dict) and (l.get("city") or l.get("state"))]
+    single = _clean_loc(payload.get("location") or {})
+    location = single if (single["city"] or single["state"]) else None
+
+    if not locations and not location:
+        # No explicit location: only allowed if there are saved cities to fall back on.
         if not conn.execute("SELECT 1 FROM cities WHERE enabled = 1 LIMIT 1").fetchone():
-            return jsonify({"error": "Enter a City and State to pull from."}), 400
-        location = None
-    else:
+            return jsonify({"error": "Enter a City and State to pull from "
+                            "(or add several under Multiple locations)."}), 400
+    if location:
+        # Remember the single location so the inputs pre-fill next time.
         for key, setting in (("city", "last_city"), ("state", "last_state"),
                              ("country", "last_country")):
             db.set_setting(conn, setting, location[key])
@@ -1198,6 +1206,7 @@ def start_pull():
     threading.Thread(
         target=_pull_worker,
         args=(run_id, industries, target, api_key, location, camp["id"] if camp else None),
+        kwargs={"locations": locations},
         daemon=True,
     ).start()
     return jsonify({"ok": True, "run_id": run_id})

@@ -6,9 +6,11 @@
   <h2>Campaigns</h2>
   <p class="dim small">
     A campaign is a client engagement: it bundles a <strong>client</strong>, an
-    <strong>offer</strong> (the pitch/scoring), a target <strong>industry</strong> and
-    <strong>geography</strong>, and the <strong>VICIdial campaign</strong> it dials under —
-    so leads and redial cycles all stay tied to the same client with full history.
+    <strong>offer</strong> (the pitch/scoring), and the <strong>VICIdial campaign</strong>
+    it dials under — so leads and redial cycles stay tied to the same client with full
+    history. Industry &amp; location are optional <strong>defaults</strong> here; you
+    actually choose them (and can sweep several cities) on the Dashboard at pull time,
+    so one campaign can cover many cities/industries over time.
   </p>
   {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
 
@@ -28,16 +30,17 @@
           {% for o in offers %}<option value="{{ o['slug'] }}">{{ o['name'] }} ({{ o['audience']|upper }})</option>{% endfor %}
         </select>
       </label>
-      <label>Industry (target vertical)
+      <label>VICIdial campaign_id <input type="text" name="vici_campaign_id" placeholder="e.g. YP2 — links redial cycles"></label>
+      <p class="dim small" style="margin:6px 0 2px;">Optional defaults (pre-fill the Dashboard; you can change them on every pull):</p>
+      <label>Default industry <span class="dim small">(optional)</span>
         <select name="industry_slug">
-          <option value="">— none (B2C: leads come from Import/intake) —</option>
+          <option value="">— none —</option>
           {% for ind in industries %}<option value="{{ ind['slug'] }}">{{ ind['label'] }}</option>{% endfor %}
         </select>
       </label>
-      <label>Country <input type="text" name="country" placeholder="United States"></label>
-      <label>State <input type="text" name="state" placeholder="Alabama"></label>
-      <label>City <input type="text" name="city" placeholder="Birmingham"></label>
-      <label>VICIdial campaign_id <input type="text" name="vici_campaign_id" placeholder="e.g. YP2 — links redial cycles"></label>
+      <label>Default country <span class="dim small">(optional)</span> <input type="text" name="country" placeholder="United States"></label>
+      <label>Default state <span class="dim small">(optional)</span> <input type="text" name="state" placeholder="Alabama"></label>
+      <label>Default city <span class="dim small">(optional)</span> <input type="text" name="city" placeholder="Birmingham"></label>
       <button type="submit" class="primary">Create campaign</button>
     </form>
   </details>

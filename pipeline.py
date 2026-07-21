@@ -337,14 +337,15 @@ def _is_cancelled(conn, run_id):
     return bool(row and row["cancel"])
 
 
-def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
-             campaign_id=None, db_path=db.DB_FILE, log=print):
+def run_pull(industry_slugs, target, api_key, location=None, locations=None,
+             run_id=None, campaign_id=None, db_path=db.DB_FILE, log=print):
     """Execute one pull. Returns the number of leads added.
 
     industry_slugs: one slug, a comma-separated string, or a list of slugs.
-    location: an optional dict {city, state, country} entered on the dashboard —
-    the pull targets exactly that place. If omitted, it falls back to rotating
-    the saved cities in Settings. The pull stops the moment `target` leads are in.
+    location: an optional dict {city, state, country} entered on the dashboard.
+    locations: an optional LIST of such dicts — the pull sweeps every one of them
+    (multi-city/state/country under one campaign). If neither is given it falls
+    back to rotating the saved cities in Settings. Stops when `target` leads are in.
 
     Opens its own DB connection so it is safe to call from a background thread.
     If run_id is given, progress is written to that pull_runs row as it goes.
@@ -373,14 +374,18 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
         # Where to pull: an explicit location entered on the dashboard, else the
         # saved-cities rotation. A "target" carries the query label + the geo to
         # stamp on leads; db_id is set only for saved cities (to touch last_pulled).
-        loc = location or {}
-        loc_city = (loc.get("city") or "").strip()
-        loc_state = (loc.get("state") or "").strip()
-        loc_country = (loc.get("country") or "").strip()
-        if loc_city or loc_state:
-            label = ", ".join(p for p in (loc_city, loc_state, loc_country) if p)
-            targets = [{"label": label, "city": loc_city, "state": loc_state,
-                        "country": loc_country, "db_id": None}]
+        loc_list = [l for l in (locations or ([location] if location else [])) if l]
+        explicit = []
+        for l in loc_list:
+            c = (l.get("city") or "").strip()
+            s = (l.get("state") or "").strip()
+            co = (l.get("country") or "").strip()
+            if c or s:
+                label = ", ".join(p for p in (c, s, co) if p)
+                explicit.append({"label": label, "city": c, "state": s,
+                                 "country": co, "db_id": None})
+        if explicit:
+            targets = explicit
         else:
             rows = conn.execute(
                 "SELECT * FROM cities WHERE enabled = 1 "
@@ -535,9 +540,9 @@ def run_pull(industry_slugs, target, api_key, location=None, run_id=None,
         if blocked:
             log(f"  DNC-suppressed {blocked} of the new leads")
 
-        # Live site-quality probe only for campaigns that explicitly want it
-        # (SEO, web design) — set by the campaign's site_check flag.
-        if campaign and campaign["site_check"]:
+        # Live site-quality probe only for offers that explicitly want it
+        # (SEO, web design) — set by the offer's site_check flag.
+        if offer and offer["site_check"]:
             check_new_websites(conn, new_lead_ids, run_id=run_id, log=log)
 
         validation_note = ""

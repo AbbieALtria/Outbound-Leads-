@@ -27,36 +27,36 @@
       <span class="dim small">Choose a client campaign (its industry + location are used automatically), or leave this on "quick one-off pull" and set the industry + location yourself below. <a href="{{ url_for('campaigns_page') }}">Set up campaigns →</a></span>
     {% endif %}
   </div>
+  {# Industry + location are chosen here at pull time. A selected campaign only
+     PRE-FILLS them (its defaults) and tags the leads — it never locks them, so one
+     campaign can sweep many cities/industries over time. #}
+  {% set pre_industry = (selected_campaign['industry_slug'] if selected_campaign and selected_campaign['industry_slug'] else default_industry) %}
+  {% set pre_country = (selected_campaign['country'] if selected_campaign and selected_campaign['country'] else last_country) %}
+  {% set pre_state = (selected_campaign['state'] if selected_campaign and selected_campaign['state'] else last_state) %}
+  {% set pre_city = (selected_campaign['city'] if selected_campaign and selected_campaign['city'] else last_city) %}
   <div class="pull-controls">
-    {% if selected_campaign %}
-      {# Campaign-scoped pull: industry + geo come from the campaign, not free dials. #}
-      <span class="pill">{{ selected_campaign['industry_slug'] }}</span>
-      <span class="dim small">in {{ [selected_campaign['city'], selected_campaign['state']]|select|join(', ') or 'saved cities' }}</span>
-    {% else %}
     <select id="pull-industry" title="Industry to pull">
       {% for ind in industries %}
-      <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == default_industry }}>{{ ind['label'] }}</option>
+      <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == pre_industry }}>{{ ind['label'] }}</option>
       {% endfor %}
     </select>
     <select id="pull-country" class="geo" title="Country"
-            data-states='{{ states_by_country|tojson }}' data-last-state="{{ last_state }}">
+            data-states='{{ states_by_country|tojson }}' data-last-state="{{ pre_state }}">
       {% for c in countries %}
-      <option value="{{ c }}" {{ 'selected' if c == last_country }}>{{ c }}</option>
+      <option value="{{ c }}" {{ 'selected' if c == pre_country }}>{{ c }}</option>
       {% endfor %}
     </select>
     <select id="pull-state" class="geo" title="State or province"></select>
     <select id="pull-city" class="geo" title="City to pull"
             data-cities='{{ cities_by_state|tojson }}'
             data-known='{{ known_by_state|tojson }}'
-            data-last-city="{{ last_city }}"></select>
+            data-last-city="{{ pre_city }}"></select>
     <input id="pull-city-new" class="geo" type="text" placeholder="Type city" autocomplete="off" hidden>
-    {% endif %}
     <input id="pull-target" type="number" min="1" max="1000" value="{{ default_target }}" title="How many leads to pull">
     <button id="pull-btn" class="primary" data-campaign="{{ selected_campaign['id'] if selected_campaign }}" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
     <button id="stop-btn" class="danger" hidden>Stop</button>
     <button id="clear-btn" class="button" type="button" title="Clear progress and reset the view">Clear</button>
 
-    {% if not selected_campaign %}
     {% set is_b2c = active_campaign and active_campaign['audience'] == 'b2c' %}
     <form method="post" action="{{ url_for('add_industry') }}" class="add-industry-form"
           title="Add a new {{ 'consumer category' if is_b2c else 'industry' }}">
@@ -64,11 +64,16 @@
       <input type="hidden" name="next" value="dashboard">
       <button type="submit">Add</button>
     </form>
-    {% endif %}
 
     {% if not api_key_set %}
       <span class="warn">OUTSCRAPER_API_KEY not set — pulling disabled (see Settings)</span>
     {% endif %}
+  </div>
+  <div class="pull-controls" style="margin-top:8px; align-items:flex-start;">
+    <label class="dim small" for="pull-locations" style="padding-top:6px;">Multiple locations<br><span class="dim">(optional)</span></label>
+    <textarea id="pull-locations" rows="2" style="flex:1; min-width:280px; max-width:520px; font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px;"
+      placeholder="Sweep several places in one pull — one per line:  City, State  (e.g. Tampa, FL)"></textarea>
+    <span class="dim small" style="padding-top:6px;">When filled, this overrides the single City above and pulls every line{{ ' under this campaign' if selected_campaign else '' }} until the target is hit.</span>
   </div>
   <div id="pull-progress" class="pull-progress" hidden>
     <span class="spinner"></span>

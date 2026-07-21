@@ -192,16 +192,27 @@ if (pullBtn) {
     });
   }
 
+  // Parse the "Multiple locations" box: one "City, State[, Country]" per line.
+  const parseLocations = () => {
+    const box = document.getElementById("pull-locations");
+    if (!box || !box.value.trim()) return [];
+    return box.value.split("\n").map((line) => {
+      const parts = line.split(",").map((p) => p.trim());
+      if (!parts[0]) return null;
+      return { city: parts[0] || "", state: parts[1] || "", country: parts[2] || "" };
+    }).filter(Boolean);
+  };
+
   pullBtn.addEventListener("click", async () => {
-    // Campaign-scoped pull: industry + geo come from the campaign (backend derives
-    // them). Ad-hoc pull: read the industry/geo pickers as before.
+    // Industry + location are always read from the dashboard pickers. A campaign
+    // (if selected) only tags the leads; it no longer locks industry/geo.
     const campaignId = pullBtn.dataset.campaign || "";
     const industryEl = document.getElementById("pull-industry");
     const industry = industryEl ? industryEl.value : "";
-    if (!campaignId && !industry) {
+    if (!industry) {
       result.hidden = false;
       result.className = "pull-result err";
-      result.textContent = "Choose a campaign or an industry to pull.";
+      result.textContent = "Choose an industry to pull.";
       return;
     }
     result.hidden = true;
@@ -209,11 +220,15 @@ if (pullBtn) {
     setRunning(true);
     progressText.textContent = "Starting…";
     try {
-      const payload = { target: document.getElementById("pull-target").value };
-      if (campaignId) {
-        payload.campaign_id = Number(campaignId);
+      const payload = {
+        target: document.getElementById("pull-target").value,
+        industries: [industry],
+      };
+      if (campaignId) payload.campaign_id = Number(campaignId);
+      const locations = parseLocations();
+      if (locations.length) {
+        payload.locations = locations;   // multi-city sweep
       } else {
-        payload.industries = [industry];
         payload.location = {
           country: (document.getElementById("pull-country") || {}).value || "",
           state: (document.getElementById("pull-state") || {}).value || "",
