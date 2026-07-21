@@ -391,6 +391,8 @@ CREATE TABLE IF NOT EXISTS clients (
     contact_name TEXT NOT NULL DEFAULT '',
     email TEXT NOT NULL DEFAULT '',
     phone TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL DEFAULT '',
+    website TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT ''
@@ -427,6 +429,12 @@ OFFER_EXTRA_COLUMNS = {
 REQUEUE_EXTRA_COLUMNS = {
     "campaign": "TEXT NOT NULL DEFAULT ''",   # VICIdial campaign_id the disposition came from
     "batch_date": "TEXT NOT NULL DEFAULT ''", # EST disposition day — the redial-batch key
+}
+
+# Extra columns on clients added after the table's first release.
+CLIENT_EXTRA_COLUMNS = {
+    "address": "TEXT NOT NULL DEFAULT ''",
+    "website": "TEXT NOT NULL DEFAULT ''",
 }
 
 # Market types a campaign can target.
@@ -523,6 +531,7 @@ def init_db(db_path=DB_FILE):
     _ensure_columns(conn, "pull_runs", PULL_RUN_EXTRA_COLUMNS)
     _ensure_columns(conn, "offers", OFFER_EXTRA_COLUMNS)
     _ensure_columns(conn, "requeue_leads", REQUEUE_EXTRA_COLUMNS)
+    _ensure_columns(conn, "clients", CLIENT_EXTRA_COLUMNS)
 
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))

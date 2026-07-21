@@ -214,10 +214,11 @@ def clients_create():
         return redirect(url_for("clients_page", error="Client name is required."))
     conn = get_db()
     conn.execute(
-        "INSERT INTO clients (name, contact_name, email, phone, notes, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO clients (name, contact_name, email, phone, website, address, notes, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (name, request.form.get("contact_name", "").strip(),
          request.form.get("email", "").strip(), request.form.get("phone", "").strip(),
+         request.form.get("website", "").strip(), request.form.get("address", "").strip(),
          request.form.get("notes", "").strip(), db.now_iso()),
     )
     conn.commit()
@@ -230,7 +231,7 @@ def clients_edit(client_id):
     if guard:
         return guard
     conn = get_db()
-    for field in ("name", "contact_name", "email", "phone", "notes"):
+    for field in ("name", "contact_name", "email", "phone", "website", "address", "notes"):
         if field in request.form:
             val = request.form.get(field, "").strip()
             if field == "name" and not val:

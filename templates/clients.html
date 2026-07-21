@@ -9,10 +9,12 @@
 
   {% if current_user and current_user['role'] == 'admin' %}
   <form method="post" action="{{ url_for('clients_create') }}" class="row-form">
-    <input type="text" name="name" placeholder="Client name" required>
+    <input type="text" name="name" placeholder="Client / business name" required>
     <input type="text" name="contact_name" placeholder="Contact person">
     <input type="email" name="email" placeholder="Email">
     <input type="text" name="phone" placeholder="Phone">
+    <input type="text" name="website" placeholder="Website">
+    <input type="text" name="address" placeholder="Address">
     <input type="text" name="notes" placeholder="Notes">
     <button type="submit" class="primary">Add client</button>
   </form>
@@ -20,7 +22,7 @@
 
   <table class="data">
     <thead>
-      <tr><th>Client</th><th>Contact</th><th>Email</th><th>Phone</th><th>Campaigns</th><th></th></tr>
+      <tr><th>Client</th><th>Contact</th><th>Email</th><th>Phone</th><th>Website</th><th>Address</th><th>Campaigns</th><th></th></tr>
     </thead>
     <tbody>
       {% for c in clients %}
@@ -29,6 +31,8 @@
         <td>{{ c['contact_name'] or '—' }}</td>
         <td>{{ c['email'] or '—' }}</td>
         <td>{{ c['phone'] or '—' }}</td>
+        <td>{% if c['website'] %}<a href="{{ c['website'] }}" target="_blank" rel="noopener">{{ c['website'] }}</a>{% else %}—{% endif %}</td>
+        <td>{{ c['address'] or '—' }}</td>
         <td>{{ c['campaign_count'] }}</td>
         <td>
           {% if current_user and current_user['role'] == 'admin' %}
@@ -39,7 +43,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="dim">No clients yet. Add one to start a campaign.</td></tr>
+      <tr><td colspan="8" class="dim">No clients yet. Add one to start a campaign.</td></tr>
       {% endfor %}
     </tbody>
   </table>
