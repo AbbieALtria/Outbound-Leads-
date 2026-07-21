@@ -77,6 +77,11 @@ def require_login():
         row = users.get(conn, user_id)
         if row and row["enabled"]:
             g.user = row
+            # First login (or after an admin reset): make them set a new password
+            # before they can use anything else.
+            if row["must_change_password"] and request.endpoint not in (
+                    "change_password", "logout", "static"):
+                return redirect(url_for("change_password"))
             return None
         session.clear()
     return redirect(url_for("login", next=request.path))
@@ -117,6 +122,33 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/help")
+def help_page():
+    return render_template("help.html", apollo_enabled=contacts.enabled())
+
+
+@app.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    """Any signed-in user sets their OWN password. Forced on first login / after an
+    admin reset (the must_change_password flag), and reachable any time from the nav."""
+    user = getattr(g, "user", None)
+    if not user:
+        return redirect(url_for("login"))
+    forced = bool(user["must_change_password"])
+    error = None
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        pw2 = request.form.get("password2", "")
+        if len(pw) < 6:
+            error = "Password must be at least 6 characters."
+        elif pw != pw2:
+            error = "The two passwords don't match."
+        else:
+            users.change_own_password(get_db(), user["id"], pw)
+            return redirect(url_for("dashboard"))
+    return render_template("change_password.html", error=error, forced=forced)
+
+
 def _require_admin():
     """Return None if the request is allowed to perform admin actions, else a
     redirect. Allowed when the current user is an admin, or when auth is disabled
@@ -155,11 +187,21 @@ def users_create():
     if guard:
         return guard
     conn = get_db()
-    ok, err = users.create_user(
+    creator = g.user["username"] if getattr(g, "user", None) else "admin"
+    role = request.form.get("role", "agent")
+    ok, result = users.create_user(
         conn, request.form.get("username", ""), request.form.get("password", ""),
-        request.form.get("role", "agent"), created_by=g.user["username"],
+        role, created_by=creator,
     )
-    return redirect(url_for("users_page", error=None if ok else err))
+    if not ok:
+        return redirect(url_for("users_page", error=result))
+    # Set caps + campaign access right at creation (agents only; admins are unlimited).
+    if role != "admin":
+        users.set_limits(conn, result,
+                         request.form.get("lead_limit_total", "0"),
+                         request.form.get("lead_limit_daily", "0"),
+                         request.form.getlist("allowed_campaigns"))
+    return redirect(url_for("users_page"))
 
 
 @app.route("/users/<int:user_id>/password", methods=["POST"])

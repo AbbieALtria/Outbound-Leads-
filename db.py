@@ -292,6 +292,8 @@ USER_EXTRA_COLUMNS = {
     "lead_limit_total": "INTEGER NOT NULL DEFAULT 0",
     "lead_limit_daily": "INTEGER NOT NULL DEFAULT 0",
     "allowed_campaigns": "TEXT NOT NULL DEFAULT ''",  # comma-separated campaign ids
+    # 1 = must set a new password at next login (set on create + admin reset).
+    "must_change_password": "INTEGER NOT NULL DEFAULT 0",
 }
 
 SCHEMA = """

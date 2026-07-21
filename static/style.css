@@ -72,13 +72,24 @@ main { padding: 16px 20px 60px; max-width: 1500px; margin: 0 auto; }
   border-radius: 10px; padding: 2px 9px; font-size: 12px; margin: 2px 3px 0 0; }
 details.u-edit { margin-top: 10px; }
 details.u-edit > summary { cursor: pointer; color: var(--accent); font-size: 13px;
-  list-style: none; display: inline-block; }
+  list-style: none; display: inline-block; border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 11px; background: #fff; font-weight: 600; }
+details.u-edit > summary:hover { background: #f0f3f7; }
+details.u-edit[open] > summary { background: #e3ecfd; border-color: var(--accent); }
 details.u-edit > summary::-webkit-details-marker { display: none; }
 .u-edit-form { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
   margin-top: 8px; padding: 12px; background: #f7f9fc; border-radius: 8px; }
 details.add-user { margin-top: 12px; }
 details.add-user > summary { list-style: none; }
 details.add-user > summary::-webkit-details-marker { display: none; }
+
+/* ---- help ---- */
+.help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px; margin-top: 14px; }
+.help-item { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+  background: #fbfcfe; }
+.help-item h3 { margin: 0 0 6px; font-size: 14px; }
+.help-item p { margin: 0; font-size: 13px; color: var(--text); line-height: 1.5; }
 
 .login-wrap { display: flex; min-height: 90vh; align-items: center; justify-content: center; }
 .login-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;

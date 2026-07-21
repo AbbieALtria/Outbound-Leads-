@@ -11,15 +11,22 @@
     <summary class="button primary" style="display:inline-block;">＋ Add a user</summary>
     <form method="post" action="{{ url_for('users_create') }}" class="u-edit-form" style="margin-top:10px;">
       <label class="dim small">Username<br><input type="text" name="username" placeholder="username" required></label>
-      <label class="dim small">Password<br>
+      <label class="dim small" title="A temporary password — the user is forced to set their own at first login">Temporary password<br>
         <span class="pw-wrap"><input type="password" name="password" placeholder="6+ chars" required><button type="button" class="pw-eye" tabindex="-1" aria-label="Show password">👁</button></span>
       </label>
-      <label class="dim small">Role<br>
+      <label class="dim small" title="Admins are unlimited and manage users. Agents get the caps/campaigns you set below.">Role<br>
         <select name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select>
       </label>
+      <label class="dim small" title="Max leads this user can ever generate (0 = unlimited). Agents only.">Total cap<br><input type="number" name="lead_limit_total" min="0" value="0" style="width:90px;"></label>
+      <label class="dim small" title="Max leads per day (0 = unlimited). Agents only.">Daily cap<br><input type="number" name="lead_limit_daily" min="0" value="0" style="width:90px;"></label>
+      <span class="dim small" style="align-self:center;">0 = unlimited</span>
+      <div class="dim small" style="flex-basis:100%;margin-top:2px;" title="Tick the campaigns this agent may pull for. None ticked = all campaigns.">Campaigns this user may pull (<strong>none = All</strong>):</div>
+      <div class="ind-checks" style="max-width:560px;">
+        {% for c in campaigns %}<label class="chk"><input type="checkbox" name="allowed_campaigns" value="{{ c['id'] }}"> {{ c['client_name'] or 'No client' }} · {{ c['name'] }}</label>{% endfor %}
+      </div>
       <button type="submit" class="primary">Create user</button>
     </form>
-    <p class="dim small" style="margin-top:6px;">After creating, open the user's <strong>Limits &amp; access</strong> to cap leads and restrict campaigns.</p>
+    <p class="dim small" style="margin-top:6px;">🔒 The user must set their own password at first login. Caps &amp; campaigns apply to <strong>agents</strong> only — <strong>admins are always unlimited</strong>.</p>
   </details>
 </section>
 

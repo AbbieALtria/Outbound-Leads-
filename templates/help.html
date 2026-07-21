@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Help — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card wide">
+  <h2>How the system works</h2>
+  <p class="dim small">A quick guide to the whole flow: find businesses → clean them up → hand a dial-ready list to VICIdial → feed call results back in. Hover most buttons in the app for a tooltip too.</p>
+
+  <div class="help-grid">
+    <div class="help-item">
+      <h3>1 · Clients &amp; Campaigns</h3>
+      <p>A <strong>Client</strong> is the customer you generate leads for (name, contact, website, address). A <strong>Campaign</strong> is one engagement for that client — it bundles an <strong>Offer</strong> (the pitch/scoring) and the <strong>VICIdial campaign id</strong> for redials. Industry &amp; location are optional defaults; you actually pick them at pull time.</p>
+    </div>
+    <div class="help-item">
+      <h3>2 · Pull leads (Dashboard)</h3>
+      <p>Pick a campaign (or “quick one-off”), choose an <strong>industry</strong> (or “All industries”) and one or more <strong>locations</strong> (the <em>Multiple locations</em> box sweeps several cities in one pull), set a target, and <strong>Pull New Leads</strong>. Leads come from Google Maps via Outscraper — name, phone, address, website, reviews, rating.</p>
+    </div>
+    <div class="help-item">
+      <h3>3 · Verify phones</h3>
+      <p><strong>Verify phones</strong> checks each number’s line type (landline/mobile/VoIP) and marks dead numbers invalid so they’re excluded from the dial export. Costs Outscraper credits (1 per number).</p>
+    </div>
+    {% if apollo_enabled %}
+    <div class="help-item">
+      <h3>4 · Enrich contacts (Apollo)</h3>
+      <p><strong>Enrich contacts</strong> finds the decision-maker (name + title) so agents get past the gatekeeper — this is <strong>free</strong>. Optional email (1 credit) and direct dial (8 credits) reveals are toggled in Settings. Start with direct-dial OFF.</p>
+    </div>
+    {% endif %}
+    <div class="help-item">
+      <h3>5 · Export to VICIdial</h3>
+      <p><strong>VICIdial CSV</strong> gives a dial-ready file in your loader’s format. DNC numbers, invalid phones, and closed businesses are automatically excluded.</p>
+    </div>
+    <div class="help-item">
+      <h3>6 · DNC &amp; compliance</h3>
+      <p>Upload your DNC / litigator lists on the <strong>DNC</strong> page; matching leads are suppressed from every export. Keep documented consent for any B2C calling, and remember Canadian lists (TA Networks) fall under CRTC, not the US DNC.</p>
+    </div>
+    <div class="help-item">
+      <h3>7 · Requeue (redials)</h3>
+      <p>Each night the system reads VICIdial dispositions and rebuilds a <strong>regenerated list</strong>: not-reached numbers go back in the pool (capped), “not interested” is paused 90 days, do-not-call is removed. Download the batch and re-upload when you’re ready — nothing goes to VICIdial automatically.</p>
+    </div>
+    <div class="help-item">
+      <h3>8 · Users &amp; limits</h3>
+      <p>Admins create users and set per-agent <strong>lead caps</strong> (daily + total) and <strong>campaign access</strong> — perfect for capped test accounts. New users must set their own password at first login. Admins are unlimited.</p>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

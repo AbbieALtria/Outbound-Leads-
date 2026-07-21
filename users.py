@@ -67,24 +67,34 @@ def create_user(conn, username, password, role, created_by):
         return False, "Password must be at least 6 characters."
     role = role if role in ROLES else "agent"
     try:
+        # New users must set their own password at first login.
         conn.execute(
-            "INSERT INTO users (username, password_hash, role, created_at, created_by) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO users (username, password_hash, role, created_at, created_by, "
+            "must_change_password) VALUES (?, ?, ?, ?, ?, 1)",
             (username, generate_password_hash(password), role, db.now_iso(), created_by),
         )
         conn.commit()
-        return True, None
+        return True, conn.execute(
+            "SELECT id FROM users WHERE username = ?", (username,)).fetchone()["id"]
     except sqlite3.IntegrityError:
         return False, f"User '{username}' already exists."
 
 
-def set_password(conn, user_id, password):
+def set_password(conn, user_id, password, require_change=True):
+    """Set a user's password. require_change=True flags them to change it at next
+    login (used when an ADMIN resets it to a temporary password)."""
     if not password or len(password) < 6:
         return False
-    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?",
-                 (generate_password_hash(password), user_id))
+    conn.execute(
+        "UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?",
+        (generate_password_hash(password), 1 if require_change else 0, user_id))
     conn.commit()
     return True
+
+
+def change_own_password(conn, user_id, password):
+    """A user setting their OWN password — clears the must-change flag."""
+    return set_password(conn, user_id, password, require_change=False)
 
 
 def toggle_enabled(conn, user_id):

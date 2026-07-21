@@ -9,21 +9,23 @@
 <body>
   <nav class="topnav">
     <span class="brand">Lead Gen Platform</span>
-    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}">Dashboard</a>
-    <a href="{{ url_for('clients_page') }}" class="{{ 'active' if request.endpoint == 'clients_page' }}">Clients</a>
-    <a href="{{ url_for('campaigns_page') }}" class="{{ 'active' if request.endpoint in ('campaigns_page', 'campaign_detail') }}">Campaigns</a>
-    <a href="{{ url_for('history') }}" class="{{ 'active' if request.endpoint == 'history' }}">History</a>
-    <a href="{{ url_for('import_leads') }}" class="{{ 'active' if request.endpoint == 'import_leads' }}">Import Leads</a>
-    <a href="{{ url_for('import_call_log') }}" class="{{ 'active' if request.endpoint == 'import_call_log' }}">Call Log</a>
-    <a href="{{ url_for('dnc_page') }}" class="{{ 'active' if request.endpoint == 'dnc_page' }}">DNC</a>
-    <a href="{{ url_for('requeue_page') }}" class="{{ 'active' if request.endpoint == 'requeue_page' }}">Requeue{% if alert_count %} <span class="nav-badge">{{ alert_count }}</span>{% endif %}</a>
-    <a href="{{ url_for('settings') }}" class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
+    <a href="{{ url_for('dashboard') }}" title="Pull new leads and see your current pull" class="{{ 'active' if request.endpoint == 'dashboard' }}">Dashboard</a>
+    <a href="{{ url_for('clients_page') }}" title="The customers you generate leads for" class="{{ 'active' if request.endpoint == 'clients_page' }}">Clients</a>
+    <a href="{{ url_for('campaigns_page') }}" title="Client engagements: offer + VICIdial campaign" class="{{ 'active' if request.endpoint in ('campaigns_page', 'campaign_detail') }}">Campaigns</a>
+    <a href="{{ url_for('history') }}" title="Every lead ever generated, with filters" class="{{ 'active' if request.endpoint == 'history' }}">History</a>
+    <a href="{{ url_for('import_leads') }}" title="Import B2C / consumer leads via CSV or API" class="{{ 'active' if request.endpoint == 'import_leads' }}">Import Leads</a>
+    <a href="{{ url_for('import_call_log') }}" title="Import VICIdial call results to keep DNC/dedup clean" class="{{ 'active' if request.endpoint == 'import_call_log' }}">Call Log</a>
+    <a href="{{ url_for('dnc_page') }}" title="Do-not-call suppression lists" class="{{ 'active' if request.endpoint == 'dnc_page' }}">DNC</a>
+    <a href="{{ url_for('requeue_page') }}" title="Nightly redial lists rebuilt from VICIdial dispositions" class="{{ 'active' if request.endpoint == 'requeue_page' }}">Requeue{% if alert_count %} <span class="nav-badge">{{ alert_count }}</span>{% endif %}</a>
+    <a href="{{ url_for('settings') }}" title="Cities, industries, offers, enrichment toggles" class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
     {% if current_user and current_user['role'] == 'admin' %}
-    <a href="{{ url_for('users_page') }}" class="{{ 'active' if request.endpoint == 'users_page' }}">Users</a>
+    <a href="{{ url_for('users_page') }}" title="Users, per-agent lead caps, and campaign access" class="{{ 'active' if request.endpoint == 'users_page' }}">Users</a>
     {% endif %}
+    <a href="{{ url_for('help_page') }}" title="How the system works" class="{{ 'active' if request.endpoint == 'help_page' }}">Help</a>
     {% if current_user %}
     <span class="nav-user">{{ current_user['username'] }}
       <span class="dim small">({{ current_user['role'] }})</span>
+      · <a href="{{ url_for('change_password') }}" title="Change your password">Password</a>
       · <a href="{{ url_for('logout') }}">Logout</a>
     </span>
     {% endif %}
