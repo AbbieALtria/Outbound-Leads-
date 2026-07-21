@@ -341,9 +341,17 @@ if (enrichBtn) {
     } else {
       enrichBtn.disabled = false;
       enrichBtn.textContent = "Enrich contacts";
+      const r = s.last || {};
+      if (r.error) {
+        eresult.className = "pull-result err";
+        eresult.textContent = "Apollo error: " + r.error;
+        return;   // don't reload — keep the error visible
+      }
       eresult.className = "pull-result ok";
-      eresult.textContent = "Contact enrichment finished.";
-      setTimeout(() => location.reload(), 1200);
+      eresult.textContent =
+        `Enriched ${r.enriched || 0} of ${r.checked || 0} — ` +
+        `${r.emails || 0} emails, ${r.phones || 0} direct dials.`;
+      setTimeout(() => location.reload(), 1800);
     }
   };
 

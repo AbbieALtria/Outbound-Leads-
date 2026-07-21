@@ -84,7 +84,8 @@ def require_login():
 
 @app.context_processor
 def inject_user():
-    ctx = {"current_user": getattr(g, "user", None), "alert_count": 0}
+    ctx = {"current_user": getattr(g, "user", None), "alert_count": 0,
+           "apollo_enabled": contacts.enabled()}
     # Show the unseen-alert badge in the nav for signed-in users.
     if getattr(g, "user", None):
         try:
@@ -1312,11 +1313,19 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone):
             f"SELECT id, website FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
             lead_ids,
         ).fetchall()
-        contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
-                              reveal_phone=reveal_phone, log=lambda *_: None)
+        result = contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
+                                       reveal_phone=reveal_phone, log=lambda *_: None)
+        db.set_setting(conn, "enrich_last_result", json.dumps(result))
+        conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            conn = db.connect()
+            db.set_setting(conn, "enrich_last_result", json.dumps({"error": str(e)}))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
     finally:
         _enrich_lock.release()
 
@@ -1351,7 +1360,13 @@ def enrich_contacts():
 
 @app.route("/api/enrich_contacts/status")
 def enrich_contacts_status():
-    return jsonify({"running": _enrich_lock.locked()})
+    conn = get_db()
+    last = db.get_setting(conn, "enrich_last_result", "")
+    try:
+        last = json.loads(last) if last else None
+    except ValueError:
+        last = None
+    return jsonify({"running": _enrich_lock.locked(), "last": last})
 
 
 # ---------------------------------------------------------------- settings CRUD

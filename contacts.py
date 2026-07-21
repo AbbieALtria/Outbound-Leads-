@@ -114,9 +114,9 @@ def _reveal(person, domain, reveal_email, reveal_phone, timeout):
 def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=print):
     """Enrich each lead that has a website with a decision-maker name/title (+ email/
     direct dial when revealed). Writes contact / contact_title / email / direct_phone.
-    Returns {checked, enriched}."""
-    import db
-    checked = enriched = 0
+    Returns {checked, enriched, emails, phones, error}."""
+    checked = enriched = emails = phones = 0
+    error = ""
     for row in lead_rows:
         website = (row["website"] if "website" in row.keys() else "") or ""
         if not website:
@@ -126,17 +126,22 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
             info = find_contact(website, reveal_email=reveal_email,
                                 reveal_phone=reveal_phone)
         except Exception as e:
+            # Surface the first failure (e.g. bad key / plan / rate limit) instead
+            # of silently finding nothing.
+            if not error:
+                error = str(e)
             log(f"  enrich failed for lead {row['id']}: {e}")
             continue
         if not info.get("name"):
             continue
         sets, vals = ["contact = ?", "contact_title = ?"], [info["name"], info.get("title", "")]
         if info.get("email"):
-            sets.append("email = ?"); vals.append(info["email"])
+            sets.append("email = ?"); vals.append(info["email"]); emails += 1
         if info.get("direct_phone"):
-            sets.append("direct_phone = ?"); vals.append(info["direct_phone"])
+            sets.append("direct_phone = ?"); vals.append(info["direct_phone"]); phones += 1
         vals.append(row["id"])
         conn.execute(f"UPDATE leads SET {', '.join(sets)} WHERE id = ?", vals)
         enriched += 1
     conn.commit()
-    return {"checked": checked, "enriched": enriched}
+    return {"checked": checked, "enriched": enriched, "emails": emails,
+            "phones": phones, "error": error}
