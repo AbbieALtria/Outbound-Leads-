@@ -12,6 +12,7 @@ with none of those set, the app stays open (no login) for convenience.
 
 import os
 import sqlite3
+from datetime import date
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -98,9 +99,55 @@ def delete_user(conn, user_id):
 
 def list_users(conn):
     return conn.execute(
-        "SELECT id, username, role, enabled, created_at, created_by FROM users "
+        "SELECT id, username, role, enabled, created_at, created_by, "
+        "lead_limit_total, lead_limit_daily, allowed_campaigns FROM users "
         "ORDER BY role, username"
     ).fetchall()
+
+
+def set_limits(conn, user_id, total, daily, allowed_campaigns):
+    """Admin-set per-user quotas. total/daily: 0 = unlimited. allowed_campaigns:
+    list/iterable of campaign ids ('' or empty = all campaigns)."""
+    def _int(v):
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return 0
+    ids = ",".join(str(int(c)) for c in allowed_campaigns if str(c).strip().isdigit())
+    conn.execute(
+        "UPDATE users SET lead_limit_total = ?, lead_limit_daily = ?, allowed_campaigns = ? "
+        "WHERE id = ?",
+        (_int(total), _int(daily), ids, user_id),
+    )
+    conn.commit()
+
+
+def allowed_campaign_ids(user_row):
+    """Set of campaign ids this user may pull for. Empty set = ALL (no restriction)."""
+    if not user_row:
+        return set()
+    raw = (user_row["allowed_campaigns"] or "").strip() if "allowed_campaigns" in user_row.keys() else ""
+    return {int(x) for x in raw.split(",") if x.strip().isdigit()}
+
+
+def usage(conn, user_id):
+    """Leads this user has generated: (total, today). Counts leads from the user's
+    own pulls (pull_runs.user_id), today by pulled_date."""
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM leads l JOIN pull_runs r ON l.run_id = r.id "
+        "WHERE r.user_id = ?", (user_id,)).fetchone()["n"]
+    today = conn.execute(
+        "SELECT COUNT(*) AS n FROM leads l JOIN pull_runs r ON l.run_id = r.id "
+        "WHERE r.user_id = ? AND l.pulled_date = ?",
+        (user_id, str(date.today()))).fetchone()["n"]
+    return total, today
+
+
+def reset_usage(conn, user_id):
+    """Zero a user's counted usage by detaching their pulls' user stamp (their
+    leads stay; they just no longer count against the quota). Admin action."""
+    conn.execute("UPDATE pull_runs SET user_id = NULL WHERE user_id = ?", (user_id,))
+    conn.commit()
 
 
 def get(conn, user_id):

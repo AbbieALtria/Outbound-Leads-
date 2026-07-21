@@ -7,7 +7,7 @@
     <span class="dim small">Pull leads for</span>
     <select id="pull-campaign" class="campaign-select"
             onchange="window.location = this.value ? ('?campaign_id=' + this.value) : '{{ url_for('dashboard') }}'">
-      <option value="">— No client · quick one-off pull —</option>
+      {% if not restrict_campaigns %}<option value="">— No client · quick one-off pull —</option>{% endif %}
       {% for c in campaigns %}
       <option value="{{ c['id'] }}" {{ 'selected' if selected_campaign and c['id'] == selected_campaign['id'] }}>
         {{ c['client_name'] or 'No client' }} · {{ c['name'] }}
@@ -15,7 +15,13 @@
       </option>
       {% endfor %}
     </select>
-    <a class="button" href="{{ url_for('campaigns_page') }}" title="Create & manage campaigns">Manage →</a>
+    {% if not restrict_campaigns %}<a class="button" href="{{ url_for('campaigns_page') }}" title="Create & manage campaigns">Manage →</a>{% endif %}
+    {% if quota %}
+    <span class="pill" style="margin-left:auto;" title="Your lead limit — set by an admin">
+      Quota · today {{ quota.today_used }}{% if quota.daily_limit %}/{{ quota.daily_limit }}{% endif %}
+      · total {{ quota.total_used }}{% if quota.total_limit %}/{{ quota.total_limit }}{% endif %}
+    </span>
+    {% endif %}
     {% if selected_campaign %}
       <span class="dim small">
         Industry <strong>{{ selected_campaign['industry_slug'] or '—' }}</strong> ·
@@ -23,6 +29,8 @@
         VICIdial <strong>{{ selected_campaign['vici_campaign_id'] or '—' }}</strong> ·
         offer <strong>{{ active_campaign['name'] if active_campaign }}</strong>
       </span>
+    {% elif restrict_campaigns %}
+      <span class="dim small">Pick your campaign above, then set the industry + location below to pull leads.</span>
     {% else %}
       <span class="dim small">Choose a client campaign (its industry + location are used automatically), or leave this on "quick one-off pull" and set the industry + location yourself below. <a href="{{ url_for('campaigns_page') }}">Set up campaigns →</a></span>
     {% endif %}

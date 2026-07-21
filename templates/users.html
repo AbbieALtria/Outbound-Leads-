@@ -2,55 +2,88 @@
 {% block title %}Users — Lead Gen Platform{% endblock %}
 {% block content %}
 
-<div class="settings-grid">
-  <section class="card wide">
-    <h2>Users</h2>
-    <p class="dim small">Admins can create and manage accounts. Agents can use the app but not manage users.</p>
-    {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
-    <table class="mini">
-      <tr><th>Username</th><th>Role</th><th>Status</th><th>Added</th><th></th></tr>
-      {% for u in users %}
-      <tr class="{{ 'disabled-row' if not u['enabled'] }}">
-        <td><strong>{{ u['username'] }}</strong>{{ ' (you)' if current_user and u['id'] == current_user['id'] else '' }}</td>
-        <td>{{ u['role'] }}</td>
-        <td>{{ 'active' if u['enabled'] else 'disabled' }}</td>
-        <td class="dim small">{{ u['created_at'][:10] }} · by {{ u['created_by'] }}</td>
-        <td class="nowrap actions">
-          <form method="post" action="{{ url_for('users_password', user_id=u['id']) }}"
-                onsubmit="return this.password.value.length>=6 || (alert('Password must be 6+ characters'),false)">
-            <span class="pw-wrap">
-              <input type="password" name="password" placeholder="new password" size="12">
-              <button type="button" class="pw-eye" aria-label="Show password" tabindex="-1">👁</button>
-            </span>
-            <button type="submit">Reset</button>
-          </form>
-          <form method="post" action="{{ url_for('users_toggle', user_id=u['id']) }}">
-            <button type="submit">{{ 'Disable' if u['enabled'] else 'Enable' }}</button>
-          </form>
-          <form method="post" action="{{ url_for('users_delete', user_id=u['id']) }}"
-                onsubmit="return confirm('Delete {{ u['username'] }}?')">
-            <button type="submit" class="danger">Delete</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </table>
+<section class="card wide">
+  <h2>Users &amp; access</h2>
+  <p class="dim small">Create accounts, set per-user lead limits (daily + total), and choose which campaigns each user may pull for. Only admins can manage users or change limits — handy for handing out capped test accounts.</p>
+  {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
 
-    <h2 style="margin-top:18px;">Add a user</h2>
-    <form method="post" action="{{ url_for('users_create') }}" class="inline-form">
-      <input type="text" name="username" placeholder="username" required>
-      <span class="pw-wrap">
-        <input type="password" name="password" placeholder="password (6+ chars)" required>
-        <button type="button" class="pw-eye" aria-label="Show password" tabindex="-1">👁</button>
-      </span>
-      <label class="dim small">role
-        <select name="role">
-          {% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
-        </select>
+  <details class="add-user">
+    <summary class="button primary" style="display:inline-block;">＋ Add a user</summary>
+    <form method="post" action="{{ url_for('users_create') }}" class="u-edit-form" style="margin-top:10px;">
+      <label class="dim small">Username<br><input type="text" name="username" placeholder="username" required></label>
+      <label class="dim small">Password<br>
+        <span class="pw-wrap"><input type="password" name="password" placeholder="6+ chars" required><button type="button" class="pw-eye" tabindex="-1" aria-label="Show password">👁</button></span>
+      </label>
+      <label class="dim small">Role<br>
+        <select name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select>
       </label>
       <button type="submit" class="primary">Create user</button>
     </form>
-  </section>
+    <p class="dim small" style="margin-top:6px;">After creating, open the user's <strong>Limits &amp; access</strong> to cap leads and restrict campaigns.</p>
+  </details>
+</section>
+
+{% for u in users %}
+<div class="user-card">
+  <div class="u-head">
+    <span class="u-name">{{ u['username'] }}</span>
+    {% if current_user and u['id'] == current_user['id'] %}<span class="badge badge-ok">you</span>{% endif %}
+    <span class="badge">{{ u['role'] }}</span>
+    {% if u['enabled'] %}<span class="badge badge-ok">active</span>{% else %}<span class="badge badge-hot">disabled</span>{% endif %}
+    <span class="u-meta">added {{ u['created_at'][:10] }} · by {{ u['created_by'] }}</span>
+    <span class="u-actions">
+      <form method="post" action="{{ url_for('users_toggle', user_id=u['id']) }}"><button class="button">{{ 'Disable' if u['enabled'] else 'Enable' }}</button></form>
+      <form method="post" action="{{ url_for('users_delete', user_id=u['id']) }}" onsubmit="return confirm('Delete {{ u['username'] }}?')"><button class="danger">Delete</button></form>
+    </span>
+  </div>
+
+  <div class="u-usage">
+    <span class="dim small">Today:
+      <strong>{{ u['used_today'] }}{% if u['lead_limit_daily'] %} / {{ u['lead_limit_daily'] }}{% endif %}</strong>
+      {% if u['lead_limit_daily'] %}<span class="qbar"><span style="width:{{ [100, u['used_today'] * 100 // u['lead_limit_daily']]|min }}%;{{ 'background:var(--red);' if u['used_today'] >= u['lead_limit_daily'] }}"></span></span>{% else %}<span class="dim">no daily cap</span>{% endif %}
+    </span>
+    <span class="dim small">Total:
+      <strong>{{ u['used_total'] }}{% if u['lead_limit_total'] %} / {{ u['lead_limit_total'] }}{% endif %}</strong>
+      {% if u['lead_limit_total'] %}<span class="qbar"><span style="width:{{ [100, u['used_total'] * 100 // u['lead_limit_total']]|min }}%;{{ 'background:var(--red);' if u['used_total'] >= u['lead_limit_total'] }}"></span></span>{% else %}<span class="dim">no total cap</span>{% endif %}
+    </span>
+    <span class="dim small">Campaigns:
+      {% if u['allowed_ids'] %}{% for c in campaigns %}{% if c['id'] in u['allowed_ids'] %}<span class="chip">{{ c['name'] }}</span>{% endif %}{% endfor %}{% else %}<span class="chip">All</span>{% endif %}
+    </span>
+  </div>
+
+  {% if u['role'] != 'admin' %}
+  <details class="u-edit">
+    <summary>⚙ Limits &amp; campaign access</summary>
+    <form method="post" action="{{ url_for('users_limits', user_id=u['id']) }}" class="u-edit-form">
+      <label class="dim small">Total cap<br><input type="number" name="lead_limit_total" min="0" value="{{ u['lead_limit_total'] }}" style="width:90px;"></label>
+      <label class="dim small">Daily cap<br><input type="number" name="lead_limit_daily" min="0" value="{{ u['lead_limit_daily'] }}" style="width:90px;"></label>
+      <span class="dim small" style="align-self:center;">0 = unlimited</span>
+      <div class="dim small" style="flex-basis:100%;margin-top:4px;">Campaigns this user may pull (<strong>none checked = All</strong>):</div>
+      <div class="ind-checks" style="max-width:560px;">
+        {% for c in campaigns %}
+        <label class="chk"><input type="checkbox" name="allowed_campaigns" value="{{ c['id'] }}" {{ 'checked' if c['id'] in u['allowed_ids'] }}> {{ c['client_name'] or 'No client' }} · {{ c['name'] }}</label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="primary">Save limits</button>
+      <button type="submit" class="button" formaction="{{ url_for('users_reset_usage', user_id=u['id']) }}"
+              onclick="return confirm('Reset this user\'s counted usage to zero? Their leads stay — they just stop counting against the cap.')">Reset usage</button>
+    </form>
+  </details>
+  {% else %}
+  <p class="dim small" style="margin-top:6px;">Admins are unlimited and can pull for any campaign.</p>
+  {% endif %}
+
+  <details class="u-edit">
+    <summary>Reset password</summary>
+    <form method="post" action="{{ url_for('users_password', user_id=u['id']) }}" class="u-edit-form"
+          onsubmit="return this.password.value.length>=6 || (alert('Password must be 6+ characters'),false)">
+      <label class="dim small">New password<br>
+        <span class="pw-wrap"><input type="password" name="password" placeholder="new password" size="16"><button type="button" class="pw-eye" tabindex="-1" aria-label="Show password">👁</button></span>
+      </label>
+      <button type="submit" class="primary">Reset password</button>
+    </form>
+  </details>
 </div>
+{% endfor %}
 
 {% endblock %}

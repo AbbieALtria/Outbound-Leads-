@@ -135,8 +135,18 @@ def users_page():
     if guard:
         return guard
     conn = get_db()
-    return render_template("users.html", users=users.list_users(conn),
-                           roles=users.ROLES, error=request.args.get("error"))
+    rows = []
+    for u in users.list_users(conn):
+        d = dict(u)
+        d["used_total"], d["used_today"] = users.usage(conn, u["id"])
+        d["allowed_ids"] = users.allowed_campaign_ids(u)
+        rows.append(d)
+    campaigns = conn.execute(
+        "SELECT c.id, c.name, cl.name AS client_name FROM campaigns c "
+        "LEFT JOIN clients cl ON cl.id = c.client_id ORDER BY c.status, c.name"
+    ).fetchall()
+    return render_template("users.html", users=rows, roles=users.ROLES,
+                           campaigns=campaigns, error=request.args.get("error"))
 
 
 @app.route("/users/create", methods=["POST"])
@@ -189,6 +199,31 @@ def users_delete(user_id):
     if target and target["id"] == g.user["id"]:
         return redirect(url_for("users_page", error="You can't delete your own account."))
     users.delete_user(conn, user_id)
+    return redirect(url_for("users_page"))
+
+
+@app.route("/users/<int:user_id>/limits", methods=["POST"])
+def users_limits(user_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    users.set_limits(
+        conn, user_id,
+        request.form.get("lead_limit_total", "0"),
+        request.form.get("lead_limit_daily", "0"),
+        request.form.getlist("allowed_campaigns"),
+    )
+    return redirect(url_for("users_page"))
+
+
+@app.route("/users/<int:user_id>/reset_usage", methods=["POST"])
+def users_reset_usage(user_id):
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    users.reset_usage(conn, user_id)
     return redirect(url_for("users_page"))
 
 
@@ -504,6 +539,19 @@ def dashboard():
         "LEFT JOIN clients cl ON cl.id = cp.client_id "
         "WHERE cp.status != 'archived' ORDER BY cp.status, cp.name"
     ).fetchall()
+    # Per-user limits: a restricted (non-admin) user sees only their campaigns and
+    # their remaining quota; admins are unrestricted.
+    user = getattr(g, "user", None)
+    quota = None
+    restrict_campaigns = False
+    if user and user["role"] != "admin":
+        allowed = users.allowed_campaign_ids(user)
+        if allowed:
+            restrict_campaigns = True
+            campaigns = [c for c in campaigns if c["id"] in allowed]
+        ut, ud = users.usage(conn, user["id"])
+        quota = {"total_used": ut, "total_limit": user["lead_limit_total"],
+                 "today_used": ud, "daily_limit": user["lead_limit_daily"]}
     sel_id = request.args.get("campaign_id") or (batch["campaign_id"] if batch else None)
     selected_campaign = None
     if sel_id:
@@ -521,6 +569,7 @@ def dashboard():
         total_leads=total_leads,
         campaigns=campaigns, active_campaign=active_campaign,
         selected_campaign=selected_campaign,
+        quota=quota, restrict_campaigns=restrict_campaigns,
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         default_target=db.get_setting(conn, "target_leads_per_day", "100"),
         countries=COUNTRIES, states_by_country=STATES_BY_COUNTRY,
@@ -1179,6 +1228,28 @@ def start_pull():
     if target < 1:
         return jsonify({"error": "Target must be at least 1"}), 400
 
+    # Per-user limits (admins are unlimited). A non-admin can only pull for their
+    # assigned campaign(s) and up to their remaining daily/total lead quota; the
+    # target is capped to whatever quota is left so they can't overshoot.
+    user = getattr(g, "user", None)
+    if user and user["role"] != "admin":
+        allowed = users.allowed_campaign_ids(user)
+        if allowed and (not campaign_id or int(campaign_id) not in allowed):
+            return jsonify({"error": "You can only pull for your assigned campaign(s). "
+                            "Pick one of your campaigns from the dropdown."}), 403
+        used_total, used_today = users.usage(conn, user["id"])
+        caps = []
+        if user["lead_limit_total"]:
+            caps.append(user["lead_limit_total"] - used_total)
+        if user["lead_limit_daily"]:
+            caps.append(user["lead_limit_daily"] - used_today)
+        if caps:
+            remaining = min(caps)
+            if remaining <= 0:
+                return jsonify({"error": "You've reached your lead limit. Ask an admin "
+                                "to raise it or reset your usage."}), 403
+            target = min(target, remaining)
+
     # Location: a multi-select list from the dashboard, or a single typed location,
     # else fall back to saved cities. All entered on the dashboard now (never locked
     # to the campaign), so one campaign can sweep several cities in one run.
@@ -1211,8 +1282,10 @@ def start_pull():
         return jsonify({"error": "A pull is already running"}), 409
 
     cur = conn.execute(
-        "INSERT INTO pull_runs (started_at, industry, target, campaign_id) VALUES (?, ?, ?, ?)",
-        (db.now_iso(), ",".join(industries), target, camp["id"] if camp else None),
+        "INSERT INTO pull_runs (started_at, industry, target, campaign_id, user_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (db.now_iso(), ",".join(industries), target, camp["id"] if camp else None,
+         user["id"] if user else None),
     )
     conn.commit()
     run_id = cur.lastrowid

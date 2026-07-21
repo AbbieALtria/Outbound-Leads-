@@ -284,6 +284,14 @@ LEAD_EXTRA_COLUMNS = {
 PULL_RUN_EXTRA_COLUMNS = {
     "cancel": "INTEGER NOT NULL DEFAULT 0",
     "campaign_id": "INTEGER",   # the campaign this pull ran for (NULL = ad-hoc/legacy)
+    "user_id": "INTEGER",       # who ran the pull (for per-user quotas; NULL = system/legacy)
+}
+
+# Per-user limits (admin-set). 0 = unlimited; allowed_campaigns '' = all campaigns.
+USER_EXTRA_COLUMNS = {
+    "lead_limit_total": "INTEGER NOT NULL DEFAULT 0",
+    "lead_limit_daily": "INTEGER NOT NULL DEFAULT 0",
+    "allowed_campaigns": "TEXT NOT NULL DEFAULT ''",  # comma-separated campaign ids
 }
 
 SCHEMA = """
@@ -560,6 +568,7 @@ def init_db(db_path=DB_FILE):
     _ensure_columns(conn, "offers", OFFER_EXTRA_COLUMNS)
     _ensure_columns(conn, "requeue_leads", REQUEUE_EXTRA_COLUMNS)
     _ensure_columns(conn, "clients", CLIENT_EXTRA_COLUMNS)
+    _ensure_columns(conn, "users", USER_EXTRA_COLUMNS)
 
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
