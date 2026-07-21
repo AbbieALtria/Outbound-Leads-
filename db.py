@@ -75,6 +75,17 @@ OFFER_PRESETS = {
             "low_reviews": {"points": 10, "hook": ""},
         },
     },
+    # B2B appointment-setting (e.g. TA Networks ICT: cloud comms, connectivity,
+    # networking, cabling). Goal is a booked meeting for an AE, not a close. Targets
+    # established multi-location businesses, so "no website" is NOT a buy signal here
+    # — a real web/comms footprint is; scoring stays light and is tuned per campaign.
+    "ict_appointment": {
+        "name": "ICT / Business Communications — Appointment", "audience": "b2b",
+        "goal": "appointment",
+        "rules": {
+            "has_website": {"points": 10, "hook": "Established business — real comms/network footprint to modernize"},
+        },
+    },
     # --- B2C presets (framework). B2C leads come from a consumer-data source,
     # not Google Maps, so scoring rules stay empty until that source is wired in;
     # the campaign definitions exist now so the platform is B2C-ready. ---
@@ -95,7 +106,7 @@ DEFAULT_QUERY_TEMPLATE = "{industry} in {city}"
 # Bump this when SEED_INDUSTRIES gains new entries; init_db() then tops up an
 # existing database once (INSERT OR IGNORE), preserving the user's own edits and
 # not resurrecting industries they deleted after the previous version.
-INDUSTRY_CATALOG_VERSION = 2
+INDUSTRY_CATALOG_VERSION = 3
 
 # Each industry carries its own search phrase (a natural Google Maps query) so
 # the pull isn't locked to "... contractor in {city}". Users can edit the phrase
@@ -196,6 +207,16 @@ SEED_INDUSTRIES = {
     "real_estate": {"label": "Real Estate Agency", "query": "real estate agency in {city}", "chains": [
         "RE/MAX", "Keller Williams", "Coldwell Banker", "Century 21", "eXp",
         "Berkshire Hathaway", "Compass", "Sotheby's"]},
+    # --- B2B ICT / multi-location targets (e.g. TA Networks appointment-setting) ---
+    "hotel": {"label": "Hotel", "query": "hotel in {city}", "chains": [
+        "Marriott", "Hilton", "Holiday Inn", "Best Western", "Comfort Inn",
+        "Fairfield Inn", "Days Inn", "Super 8"]},
+    "medical_clinic": {"label": "Medical Clinic", "query": "medical clinic in {city}", "chains": []},
+    "physiotherapy": {"label": "Physiotherapy Clinic", "query": "physiotherapy clinic in {city}", "chains": []},
+    "consulting_firm": {"label": "Consulting Firm", "query": "consulting firm in {city}", "chains": []},
+    "car_dealership": {"label": "Car Dealership", "query": "car dealership in {city}", "chains": []},
+    "furniture_store": {"label": "Furniture Store", "query": "furniture store in {city}", "chains": [
+        "IKEA", "Ashley", "Leon's", "The Brick"]},
 }
 
 DEFAULT_SETTINGS = {
@@ -539,6 +560,7 @@ def init_db(db_path=DB_FILE):
     _seed_industries(conn)
     _seed_offers(conn)
     _seed_default_client(conn)
+    _seed_ta_networks(conn)
     _migrate_cities(conn)
     _migrate_leads(conn)
     _backfill_lead_fields(conn)
@@ -595,6 +617,41 @@ def _seed_default_client(conn):
         "VALUES (1, 'Unassigned (house)', '', ?)",
         (now_iso(),),
     )
+
+
+def _seed_ta_networks(conn):
+    """One-time setup for the TA Networks engagement (Canadian ICT provider,
+    Mississauga; B2B appointment-setting per their dialer playbook). Creates the
+    client + the four playbook campaigns (retail, hospitality, professional/legal,
+    clinics). Guarded by a flag so it seeds ONCE and never resurrects if the user
+    edits or deletes it. Industry/geo are optional defaults — the pull picks them."""
+    if get_setting(conn, "seed_ta_networks_v1", "") == "done":
+        return
+    now = now_iso()
+    cur = conn.execute(
+        "INSERT INTO clients (name, contact_name, email, phone, website, address, notes, enabled, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        ("TA Networks", "Ganshan", "", "1-877-362-6826", "https://tanetworks.ca",
+         "Mississauga, Ontario, Canada",
+         "Canadian ICT: HELLO cloud comms, connectivity (internet/LTE-5G failover), "
+         "networking (Fortinet/Wi-Fi/SD-WAN), cabling. B2B appointment-setting for AEs. "
+         "CRTC / Canadian National DNC rules apply.", now),
+    )
+    client_id = cur.lastrowid
+    # (campaign name, default industry_slug) — the four playbook verticals.
+    for name, industry in (
+        ("TA Networks — Multi-location Retail", "car_dealership"),
+        ("TA Networks — Hospitality & Hotels", "hotel"),
+        ("TA Networks — Professional Services & Legal", "law_firm"),
+        ("TA Networks — Clinics & Healthcare", "dentist"),
+    ):
+        conn.execute(
+            "INSERT INTO campaigns (name, client_id, offer_slug, audience, industry_slug, "
+            "country, state, city, vici_campaign_id, status, created_at) "
+            "VALUES (?, ?, 'ict_appointment', 'b2b', ?, 'Canada', 'Ontario', 'Toronto', '', 'active', ?)",
+            (name, client_id, industry, now),
+        )
+    set_setting(conn, "seed_ta_networks_v1", "done")
 
 
 def _backfill_reviews(conn):
