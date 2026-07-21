@@ -36,6 +36,7 @@
   {% set pre_city = (selected_campaign['city'] if selected_campaign and selected_campaign['city'] else last_city) %}
   <div class="pull-controls">
     <select id="pull-industry" title="Industry to pull">
+      <option value="__all__" {{ 'selected' if pre_industry == '__all__' }}>— All industries —</option>
       {% for ind in industries %}
       <option value="{{ ind['slug'] }}" {{ 'selected' if ind['slug'] == pre_industry }}>{{ ind['label'] }}</option>
       {% endfor %}

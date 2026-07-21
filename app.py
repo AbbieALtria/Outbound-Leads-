@@ -1150,14 +1150,22 @@ def start_pull():
         if not camp:
             return jsonify({"error": "Unknown campaign"}), 400
 
-    industries = payload.get("industries") or [
-        payload.get("industry") or db.get_setting(conn, "default_industry", "hvac")
-    ]
-    if not isinstance(industries, list) or not all(isinstance(s, str) for s in industries):
-        return jsonify({"error": "industries must be a list of slugs"}), 400
-    industries = [s.strip() for s in industries if s.strip()]
-    if not industries:
-        return jsonify({"error": "Choose at least one industry to pull."}), 400
+    if payload.get("all_industries"):
+        # Sweep the whole catalog — the pull loops every industry until the target
+        # is hit (raise the target to reach more of them).
+        industries = [r["slug"] for r in conn.execute(
+            "SELECT slug FROM industries WHERE enabled = 1 ORDER BY label")]
+        if not industries:
+            return jsonify({"error": "No industries are configured."}), 400
+    else:
+        industries = payload.get("industries") or [
+            payload.get("industry") or db.get_setting(conn, "default_industry", "hvac")
+        ]
+        if not isinstance(industries, list) or not all(isinstance(s, str) for s in industries):
+            return jsonify({"error": "industries must be a list of slugs"}), 400
+        industries = [s.strip() for s in industries if s.strip()]
+        if not industries:
+            return jsonify({"error": "Choose at least one industry to pull."}), 400
     try:
         target = int(payload.get("target") or db.get_setting(conn, "target_leads_per_day", "100"))
     except ValueError:

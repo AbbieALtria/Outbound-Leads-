@@ -220,10 +220,12 @@ if (pullBtn) {
     setRunning(true);
     progressText.textContent = "Starting…";
     try {
-      const payload = {
-        target: document.getElementById("pull-target").value,
-        industries: [industry],
-      };
+      const payload = { target: document.getElementById("pull-target").value };
+      if (industry === "__all__") {
+        payload.all_industries = true;      // sweep every industry in the catalog
+      } else {
+        payload.industries = [industry];
+      }
       if (campaignId) payload.campaign_id = Number(campaignId);
       const locations = parseLocations();
       if (locations.length) {
