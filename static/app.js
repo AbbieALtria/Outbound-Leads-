@@ -205,8 +205,10 @@ if (pullBtn) {
 
   pullBtn.addEventListener("click", async () => {
     // Industry + location are always read from the dashboard pickers. A campaign
-    // (if selected) only tags the leads; it no longer locks industry/geo.
-    const campaignId = pullBtn.dataset.campaign || "";
+    // (if selected) only tags the leads; it no longer locks industry/geo. Read the
+    // dropdown's current value so whatever is shown is what gets sent.
+    const campSel = document.getElementById("pull-campaign");
+    const campaignId = (campSel ? campSel.value : "") || pullBtn.dataset.campaign || "";
     const industryEl = document.getElementById("pull-industry");
     const industry = industryEl ? industryEl.value : "";
     if (!industry) {

@@ -595,6 +595,11 @@ def dashboard():
         quota = {"total_used": ut, "total_limit": user["lead_limit_total"],
                  "today_used": ud, "daily_limit": user["lead_limit_daily"]}
     sel_id = request.args.get("campaign_id") or (batch["campaign_id"] if batch else None)
+    # A restricted user has no ad-hoc option, so default to their first campaign —
+    # otherwise the dropdown shows a campaign that isn't actually "selected" and the
+    # pull is rejected as having no campaign.
+    if not sel_id and restrict_campaigns and campaigns:
+        sel_id = campaigns[0]["id"]
     selected_campaign = None
     if sel_id:
         selected_campaign = conn.execute(

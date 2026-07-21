@@ -9,10 +9,10 @@
 
   <details class="add-user">
     <summary class="button primary" style="display:inline-block;">＋ Add a user</summary>
-    <form method="post" action="{{ url_for('users_create') }}" class="u-edit-form" style="margin-top:10px;">
-      <label class="dim small">Username<br><input type="text" name="username" placeholder="username" required></label>
+    <form method="post" action="{{ url_for('users_create') }}" class="u-edit-form" style="margin-top:10px;" autocomplete="off">
+      <label class="dim small">Username<br><input type="text" name="username" placeholder="username" required autocomplete="off"></label>
       <label class="dim small" title="A temporary password — the user is forced to set their own at first login">Temporary password<br>
-        <span class="pw-wrap"><input type="password" name="password" placeholder="6+ chars" required><button type="button" class="pw-eye" tabindex="-1" aria-label="Show password">👁</button></span>
+        <span class="pw-wrap"><input type="password" name="password" placeholder="6+ chars" required autocomplete="new-password"><button type="button" class="pw-eye" tabindex="-1" aria-label="Show password">👁</button></span>
       </label>
       <label class="dim small" title="Admins are unlimited and manage users. Agents get the caps/campaigns you set below.">Role<br>
         <select name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select>
