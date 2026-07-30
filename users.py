@@ -35,13 +35,32 @@ def auth_enabled(conn=None):
 
 def ensure_admin(conn):
     """Seed the admin account from ADMIN_USER/ADMIN_PASSWORD (falls back to the
-    existing APP_PASSWORD) if auth is enabled and no admin exists yet."""
+    existing APP_PASSWORD) if auth is enabled and no admin exists yet.
+
+    Recovery: set env ADMIN_RESET=1 (with ADMIN_USER + ADMIN_PASSWORD) to FORCE
+    that account to the given password on the next deploy — the way back in when
+    the admin password is lost. Remove ADMIN_RESET afterwards."""
     password = _bootstrap_password()
     if not password:
         return
-    if conn.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1").fetchone():
-        return
     username = (os.environ.get("ADMIN_USER", "admin").strip() or "admin")
+    reset = os.environ.get("ADMIN_RESET", "").strip().lower() in ("1", "true", "yes")
+    if conn.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1").fetchone() and not reset:
+        return
+    if reset:
+        row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE users SET password_hash = ?, role = 'admin', enabled = 1, "
+                "must_change_password = 0 WHERE id = ?",
+                (generate_password_hash(password), row["id"]))
+        else:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, enabled, created_at, "
+                "created_by, must_change_password) VALUES (?, ?, 'admin', 1, ?, 'reset', 0)",
+                (username, generate_password_hash(password), db.now_iso()))
+        conn.commit()
+        return
     conn.execute(
         "INSERT OR IGNORE INTO users (username, password_hash, role, created_at, created_by) "
         "VALUES (?, ?, 'admin', ?, 'system')",
