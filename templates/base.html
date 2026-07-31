@@ -32,23 +32,9 @@
     {% endif %}
   </nav>
   <main>
-    {% if apollo_enabled %}
-    <section id="enrich-notice" class="toolbar" style="border-left:4px solid var(--amber);">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-        <div>
-          <strong>⚠️ Contact Enrichment (Apollo) — read before using; it spends money.</strong>
-          <ul class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.55;">
-            <li><strong>Start with direct-dial reveal OFF.</strong> Click <em>“Enrich contacts”</em> to get each decision-maker’s <strong>name + title for your whole list — FREE</strong>. Knowing who to ask for gets past most gatekeepers.</li>
-            <li><strong>Turn on direct-dial reveal only for your best targets</strong> (e.g. multi-location accounts) — it costs <strong>8 Apollo credits per number</strong>.</li>
-            <li>Per lead: <strong>name + title = free</strong> · <strong>email = 1 credit</strong> · <strong>direct dial / mobile = 8 credits</strong>. Credits come out of your Apollo plan.</li>
-            <li>Reveal toggles live in <a href="{{ url_for('settings') }}">Settings</a>. API access + credits depend on your Apollo plan.</li>
-          </ul>
-        </div>
-        <button type="button" class="button" onclick="document.getElementById('enrich-notice').style.display='none';sessionStorage.setItem('enrichNoticeDismissed','1');">Got it</button>
-      </div>
-    </section>
-    <script>if(sessionStorage.getItem('enrichNoticeDismissed')){var _n=document.getElementById('enrich-notice');if(_n)_n.style.display='none';}</script>
-    {% endif %}
+    {# The Apollo cost warning lives in the "Enrich contacts" confirmation modal
+       (dashboard.html) — shown at the moment of the action, with a live credit
+       estimate — rather than as a banner on every page. #}
     {% block content %}{% endblock %}
   </main>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
