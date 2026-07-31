@@ -82,10 +82,20 @@ OFFER_PRESETS = {
     "ict_appointment": {
         "name": "ICT / Business Communications — Appointment", "audience": "b2b",
         "goal": "appointment",
+        # Keywords mined from customer reviews that signal comms pain (opt-in;
+        # needs the review_signals setting on). Editable per offer in Settings.
+        "pain_keywords": ["no answer", "on hold", "phone tree", "couldn't reach",
+                          "hard to reach"],
         "rules": {
             "multi_location": {"points": 50, "hook": "{location_count} locations found — needs unified comms/network across sites"},
-            "low_reviews":     {"points": 10, "hook": "Only {reviews} reviews — still growing, likely upgrading infrastructure"},
-            "has_website":     {"points": 5,  "hook": "Established business — real comms/network footprint to modernize"},
+            # Each offer defines its OWN good-fit employee range (min/max live in
+            # the rule, not hard-coded in the signal).
+            "company_size_fit": {"points": 25, "min": 5, "max": 200,
+                                 "hook": "{employee_count} employees — right size for a managed comms rollout"},
+            "review_pain_match": {"points": 30, "hook": "Reviews mention reach/hold problems — direct comms pain"},
+            "new_in_market":     {"points": 15, "hook": "New in market (first review {first_review_date}) — likely still choosing vendors"},
+            "low_reviews":       {"points": 10, "hook": "Only {reviews} reviews — still growing, likely upgrading infrastructure"},
+            "has_website":       {"points": 5,  "hook": "Established business — real comms/network footprint to modernize"},
         },
     },
     # --- B2C presets (framework). B2C leads come from a consumer-data source,
@@ -234,6 +244,10 @@ DEFAULT_SETTINGS = {
     # Validate each new lead's phone (line type + drop dead numbers) during the
     # pull. Costs extra Outscraper credits per number; off by default.
     "phone_validation": "0",
+    # Mine each new lead's Google reviews (earliest review date + recent review
+    # text) to power the new_in_market / review_pain_match signals. Outscraper
+    # prices reviews SEPARATELY (~$3 per 1,000 reviews); off by default.
+    "review_signals": "0",
     # Drop VOIP + toll-free numbers from dial exports (better B2B connect rate).
     "drop_voip_export": "0",
     # Daily requeue job time, EST (HH:MM). Reads VICIdial dispositions.
@@ -279,6 +293,13 @@ LEAD_EXTRA_COLUMNS = {
     "site_last_visit_date": "TEXT",
     "intent_topic": "TEXT NOT NULL DEFAULT ''",
     "intent_last_seen_date": "TEXT",
+    # Company firmographics from Apollo's Organization Enrichment (1 credit/org).
+    "employee_count": "INTEGER",
+    "company_revenue": "TEXT",
+    "company_industry": "TEXT",
+    # Review mining (opt-in `review_signals`; Outscraper reviews cost per review).
+    "first_review_date": "TEXT",
+    "review_text_sample": "TEXT",
     # Market + provenance. B2B leads are pulled from Maps; B2C leads arrive via
     # the intake API / CSV import and MUST carry consent for compliant calling.
     "market_type": "TEXT NOT NULL DEFAULT 'b2b'",       # b2b | b2c
@@ -493,6 +514,8 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_vici ON campaigns(vici_campaign_id);
 OFFER_EXTRA_COLUMNS = {
     "site_check": "INTEGER NOT NULL DEFAULT 0",
     "enabled": "INTEGER NOT NULL DEFAULT 1",
+    # JSON list of review keywords that signal this offer's pain (review_pain_match).
+    "pain_keywords": "TEXT NOT NULL DEFAULT '[]'",
 }
 
 # Extra columns on requeue_leads added after first release.
@@ -653,11 +676,33 @@ def _seed_offers(conn):
     import json
     for slug, info in OFFER_PRESETS.items():
         conn.execute(
-            "INSERT OR IGNORE INTO offers (slug, name, audience, goal, rules, is_preset, site_check) "
-            "VALUES (?, ?, ?, ?, ?, 1, ?)",
+            "INSERT OR IGNORE INTO offers (slug, name, audience, goal, rules, is_preset, "
+            "site_check, pain_keywords) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
             (slug, info["name"], info["audience"], info["goal"],
-             json.dumps(info["rules"]), info.get("site_check", 0)),
+             json.dumps(info["rules"]), info.get("site_check", 0),
+             json.dumps(info.get("pain_keywords", []))),
         )
+    _refresh_preset_offers(conn)
+
+
+# Bump when OFFER_PRESETS' rules change, to push the new rules onto the PRESET
+# offers of an existing database once (user-created offers are never touched).
+OFFER_PRESET_VERSION = 2
+
+
+def _refresh_preset_offers(conn):
+    """One-time-per-version refresh of preset offers' rules + pain_keywords, so a
+    preset's scoring change reaches databases seeded before it. Only rows with
+    is_preset = 1 are touched."""
+    import json
+    if int(get_setting(conn, "offer_preset_version", "0") or 0) >= OFFER_PRESET_VERSION:
+        return
+    for slug, info in OFFER_PRESETS.items():
+        conn.execute(
+            "UPDATE offers SET rules = ?, pain_keywords = ? WHERE slug = ? AND is_preset = 1",
+            (json.dumps(info["rules"]), json.dumps(info.get("pain_keywords", [])), slug),
+        )
+    set_setting(conn, "offer_preset_version", str(OFFER_PRESET_VERSION))
 
 
 def _seed_default_client(conn):

@@ -50,7 +50,7 @@ users.ensure_admin(_seed_conn)
 # Bump when scoring/hook logic changes, so stored score+call_hook are refreshed
 # once on the next start instead of showing stale hooks. Bumped to 3 for the
 # per-campaign scoring model; 4 for the ICT multi_location signal + rules.
-SCORING_VERSION = "4"
+SCORING_VERSION = "5"
 if db.get_setting(_seed_conn, "scoring_version") != SCORING_VERSION:
     scoring.rescore_everything(_seed_conn)
     db.set_setting(_seed_conn, "scoring_version", SCORING_VERSION)
@@ -87,6 +87,16 @@ def require_login():
             return None
         session.clear()
     return redirect(url_for("login", next=request.path))
+
+
+@app.template_filter("fromjson")
+def _fromjson(value):
+    """Parse a JSON column (e.g. an offer's pain_keywords list) in a template."""
+    try:
+        out = json.loads(value or "[]")
+        return out if isinstance(out, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 @app.context_processor
@@ -696,6 +706,7 @@ def settings():
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         contact_enrichment=db.get_setting(conn, "contact_enrichment", "1") == "1",
         phone_validation=db.get_setting(conn, "phone_validation", "0") == "1",
+        review_signals=db.get_setting(conn, "review_signals", "0") == "1",
         drop_voip_export=db.get_setting(conn, "drop_voip_export", "0") == "1",
         apollo_enabled=contacts.enabled(),
         enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
@@ -1599,7 +1610,8 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone):
     try:
         conn = db.connect()
         rows = conn.execute(
-            f"SELECT id, website, contact, email FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
+            f"SELECT id, website, contact, email, employee_count FROM leads "
+            f"WHERE id IN ({','.join('?' * len(lead_ids))})",
             lead_ids,
         ).fetchall()
         result = contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
@@ -1816,6 +1828,11 @@ def edit_campaign(campaign_id):
         conn.execute("UPDATE offers SET audience = ? WHERE id = ?", (audience, campaign_id))
     if goal in ("close", "appointment"):
         conn.execute("UPDATE offers SET goal = ? WHERE id = ?", (goal, campaign_id))
+    if "pain_keywords" in request.form:
+        # Comma-separated in the UI, stored as a JSON list.
+        kws = [k.strip() for k in request.form.get("pain_keywords", "").split(",") if k.strip()]
+        conn.execute("UPDATE offers SET pain_keywords = ? WHERE id = ?",
+                     (json.dumps(kws), campaign_id))
     conn.commit()
     return redirect(url_for("settings"))
 
@@ -1855,6 +1872,8 @@ def save_general_settings():
                    "1" if request.form.get("contact_enrichment") else "0")
     db.set_setting(conn, "phone_validation",
                    "1" if request.form.get("phone_validation") else "0")
+    db.set_setting(conn, "review_signals",
+                   "1" if request.form.get("review_signals") else "0")
     db.set_setting(conn, "drop_voip_export",
                    "1" if request.form.get("drop_voip_export") else "0")
     db.set_setting(conn, "enrich_reveal_email",

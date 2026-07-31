@@ -26,6 +26,12 @@
         Validate phone numbers during each pull (line type + drop dead numbers) — costs extra credits
       </label>
       <label class="chk-row">
+        <input type="checkbox" name="review_signals" {{ 'checked' if review_signals }}>
+        Mine each new lead's Google reviews (first-review date + recent review text) — powers the
+        <em>new in market</em> and <em>review pain match</em> signals. Outscraper bills reviews
+        separately (~$3 per 1,000 reviews); off by default
+      </label>
+      <label class="chk-row">
         <input type="checkbox" name="drop_voip_export" {{ 'checked' if drop_voip_export }}>
         Drop VOIP &amp; toll-free numbers from dial exports (better B2B connect rate)
       </label>
@@ -90,6 +96,10 @@
               <option value="close" {{ 'selected' if c['goal'] == 'close' }}>Close on call</option>
               <option value="appointment" {{ 'selected' if c['goal'] == 'appointment' }}>Appointment</option>
             </select>
+            <input type="text" name="pain_keywords" size="30"
+                   value="{{ (c['pain_keywords'] or '[]')|fromjson|join(', ') }}"
+                   placeholder="pain keywords (comma-separated)"
+                   title="Review keywords that signal this offer's pain — powers review_pain_match (needs the review-mining setting on)">
             <button type="submit" title="Save changes">Save</button>
           </form>
         </td>

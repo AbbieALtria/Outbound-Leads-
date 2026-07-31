@@ -243,6 +243,77 @@ def check_new_websites(conn, lead_ids, run_id=None, log=print):
 
 
 PHONES_ENRICHER_URL = "https://api.outscraper.com/phones-enricher"
+# Reviews are a SEPARATE Outscraper service from Places search and are billed per
+# REVIEW (~$3 / 1,000 at the time of writing, first 500 free) — so this only runs
+# when the `review_signals` setting is on, and pulls a small number per lead.
+REVIEWS_URL = "https://api.outscraper.com/maps/reviews-v3"
+REVIEWS_PER_LEAD = 10
+
+
+def fetch_reviews(api_key, query, limit=REVIEWS_PER_LEAD, timeout=120):
+    """Newest reviews for one place (query = place id / name+address / maps url).
+    Returns (first_review_date, sample_text): the earliest review date seen and the
+    concatenated text of the most recent reviews. Best-effort — returns ('', '')
+    when the service errors or has nothing, so a pull never fails on reviews."""
+    try:
+        resp = requests.get(
+            REVIEWS_URL,
+            params={"query": query, "reviewsLimit": limit, "sort": "newest",
+                    "async": "false"},
+            headers={"X-API-KEY": api_key}, timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return "", ""
+        rows = resp.json().get("data", [])
+    except Exception:
+        return "", ""
+    # Response shape: [ {..place.., reviews_data: [ {review_text, ...}, ... ] } ]
+    reviews = []
+    for item in rows if isinstance(rows, list) else [rows]:
+        if isinstance(item, dict):
+            reviews.extend(item.get("reviews_data") or [])
+        elif isinstance(item, list):
+            for sub in item:
+                reviews.extend((sub or {}).get("reviews_data") or [])
+    if not reviews:
+        return "", ""
+    texts, dates = [], []
+    for r in reviews:
+        t = (r.get("review_text") or "").strip()
+        if t:
+            texts.append(t)
+        # Field name varies by service version — accept the known variants.
+        for key in ("review_datetime_utc", "review_timestamp", "date", "review_date"):
+            v = r.get(key)
+            if v:
+                dates.append(str(v))
+                break
+    first = min(dates)[:10] if dates else ""
+    return first, " | ".join(texts[:limit])[:4000]
+
+
+def collect_review_signals(conn, lead_ids, api_key, log=print):
+    """Fetch review data for freshly pulled leads and store first_review_date +
+    review_text_sample (powers new_in_market / review_pain_match). Opt-in: only
+    called when the review_signals setting is on. Costs Outscraper review credits."""
+    rows = conn.execute(
+        f"SELECT id, business_name, address, maps_url FROM leads "
+        f"WHERE id IN ({','.join('?' * len(lead_ids))})", lead_ids).fetchall() if lead_ids else []
+    done = 0
+    for row in rows:
+        query = row["maps_url"] or ", ".join(
+            p for p in (row["business_name"], row["address"]) if p)
+        if not query:
+            continue
+        first, sample = fetch_reviews(api_key, query)
+        if first or sample:
+            conn.execute(
+                "UPDATE leads SET first_review_date = ?, review_text_sample = ? WHERE id = ?",
+                (first, sample, row["id"]))
+            done += 1
+    conn.commit()
+    log(f"  review signals captured for {done} lead(s)")
+    return done
 
 
 def validate_phones(api_key, phones):
@@ -442,6 +513,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         buffer_multiplier = float(db.get_setting(conn, "buffer_multiplier", "2.0"))
         enrich = db.get_setting(conn, "contact_enrichment", "1") == "1"
         validate = db.get_setting(conn, "phone_validation", "0") == "1"
+        review_signals = db.get_setting(conn, "review_signals", "0") == "1"
         # This pull runs for one campaign (client engagement); score its leads
         # under that campaign's offer. campaign_id=None -> unassigned, default offer.
         camp_row = None
@@ -593,6 +665,15 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         # (SEO, web design) — set by the offer's site_check flag.
         if offer and offer["site_check"]:
             check_new_websites(conn, new_lead_ids, run_id=run_id, log=log)
+
+        # Review mining (opt-in, billed per review) -> new_in_market /
+        # review_pain_match. Runs before the rescore below so scores include it.
+        if review_signals and new_lead_ids and api_key:
+            collect_review_signals(conn, new_lead_ids, api_key, log=log)
+            scoring._rescore_rows(conn, conn.execute(
+                f"SELECT * FROM leads WHERE id IN ({','.join('?' * len(new_lead_ids))})",
+                new_lead_ids), rules)
+            conn.commit()
 
         validation_note = ""
         if validate and new_lead_ids and api_key:

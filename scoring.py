@@ -58,14 +58,54 @@ SIGNALS = {
     # B2B intent signals matched from an external source (Leadfeeder/Bombora/etc).
     "recent_site_visitor": lambda l: _within_days(_mv(l, "site_last_visit_date"), 30),
     "active_intent": lambda l: _within_days(_mv(l, "intent_last_seen_date"), 30),
+    # Review mining (only fires when review_signals captured the data; missing
+    # data == does not fire, same as every other signal).
+    "new_in_market": lambda l: _within_days(_mv(l, "first_review_date"), 365),
 }
+
+# Signals whose behaviour is configured PER OFFER — called as check(lead, cfg)
+# with that offer's own rule entry, so each offer sets its own range/keywords
+# instead of one hard-coded threshold for every campaign.
+CONFIGURABLE_SIGNALS = {"company_size_fit", "review_pain_match"}
+
+
+def _company_size_fit(lead, cfg):
+    """Employee count inside THIS offer's good-fit range (cfg 'min'/'max')."""
+    n = _mv(lead, "employee_count")
+    if n is None:
+        return False
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return False
+    lo = cfg.get("min")
+    hi = cfg.get("max")
+    if lo is not None and n < int(lo):
+        return False
+    if hi is not None and n > int(hi):
+        return False
+    return True
+
+
+def _review_pain_match(lead, cfg):
+    """Any of THIS offer's pain_keywords appears in the review sample."""
+    sample = (_mv(lead, "review_text_sample") or "").lower()
+    if not sample:
+        return False
+    return any(str(k).strip().lower() in sample
+               for k in (cfg.get("keywords") or []) if str(k).strip())
+
+
+SIGNALS["company_size_fit"] = _company_size_fit
+SIGNALS["review_pain_match"] = _review_pain_match
 
 
 # Signals that only make sense for B2B (business) leads. They must never fire
 # for a B2C consumer lead, even if a B2B campaign happens to be active.
 B2B_ONLY_SIGNALS = {"no_website", "has_website", "unclaimed",
                     "low_reviews", "few_reviews", "low_rating", "multi_location",
-                    "recent_site_visitor", "active_intent"}
+                    "recent_site_visitor", "active_intent",
+                    "company_size_fit", "review_pain_match", "new_in_market"}
 
 
 def _mv(lead, key, default=None):
@@ -85,6 +125,10 @@ def _fmt(hook, lead):
             intent_topic=_mv(lead, "intent_topic", ""),
             site_last_visit_date=_mv(lead, "site_last_visit_date", ""),
             intent_last_seen_date=_mv(lead, "intent_last_seen_date", ""),
+            employee_count=_mv(lead, "employee_count"),
+            company_revenue=_mv(lead, "company_revenue", ""),
+            company_industry=_mv(lead, "company_industry", ""),
+            first_review_date=_mv(lead, "first_review_date", ""),
         )
     except Exception:
         return hook
@@ -102,7 +146,8 @@ def evaluate(lead, rules):
         if check is None:
             continue
         try:
-            fired = check(lead)
+            # Per-offer signals get their own rule config (range / keywords).
+            fired = check(lead, cfg) if signal in CONFIGURABLE_SIGNALS else check(lead)
         except (KeyError, TypeError, IndexError):
             fired = False
         if fired:
@@ -119,10 +164,19 @@ def evaluate(lead, rules):
 
 
 def load_rules(offer_row):
+    """This offer's rules. The offer's own pain_keywords (a separate column) are
+    injected into the review_pain_match rule so evaluate() stays signature-stable."""
     try:
-        return json.loads(offer_row["rules"]) if offer_row else {}
+        rules = json.loads(offer_row["rules"]) if offer_row else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+    if offer_row is not None and "review_pain_match" in rules:
+        try:
+            kw = json.loads(offer_row["pain_keywords"] or "[]")
+        except (json.JSONDecodeError, TypeError, KeyError, IndexError):
+            kw = []
+        rules["review_pain_match"] = {**rules["review_pain_match"], "keywords": kw}
+    return rules
 
 
 def _rescore_rows(conn, rows, rules):

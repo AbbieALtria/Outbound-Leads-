@@ -20,6 +20,10 @@ import requests
 
 SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search"
 MATCH_URL = "https://api.apollo.io/api/v1/people/match"
+# Organization Enrichment. NOTE: per Apollo's docs this costs 1 CREDIT PER
+# ORGANIZATION (it is not free), so callers dedupe by domain within a run and the
+# number of org calls actually made is reported back for cost visibility.
+ORG_URL = "https://api.apollo.io/api/v1/organizations/enrich"
 
 # Decision-makers worth reaching, best-first — covers TA's personas (Owner/GM/IT/
 # Practice Manager) and small-business owners.
@@ -84,6 +88,34 @@ def find_contact(website, titles=None, reveal_email=False, reveal_phone=False,
     return out
 
 
+def enrich_organization(website, timeout=30):
+    """Company firmographics (employee count, revenue, industry) for a company,
+    matched by website domain, via Apollo's Organization Enrichment endpoint.
+    Returns {employee_count, revenue, industry} or {} when disabled / no domain /
+    no match.
+
+    COST: Apollo's docs put this at 1 credit per organization — it is NOT free, so
+    callers should dedupe by domain and watch the reported call count against the
+    account's actual usage rather than trusting an assumed price."""
+    domain = domain_of(website)
+    if not enabled() or not domain:
+        return {}
+    resp = requests.get(ORG_URL, params={"domain": domain}, headers=_headers(),
+                        timeout=timeout)
+    if resp.status_code != 200:
+        return {}
+    org = (resp.json() or {}).get("organization") or {}
+    if not org:
+        return {}
+    # annual_revenue is numeric; annual_revenue_printed is the display string.
+    revenue = org.get("annual_revenue_printed") or org.get("annual_revenue")
+    return {
+        "employee_count": org.get("estimated_num_employees"),
+        "revenue": str(revenue).strip() if revenue not in (None, "") else "",
+        "industry": (org.get("industry") or "").strip(),
+    }
+
+
 def _reveal(person, domain, reveal_email, reveal_phone, timeout):
     """People Enrich to unlock email (1 credit) / phone (8 credits). Best-effort;
     returns only the fields that came back."""
@@ -123,12 +155,33 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
     Returns {checked, enriched, emails, phones, skipped_already_enriched, error}
     where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
     avoided."""
-    checked = enriched = emails = phones = skipped = 0
+    checked = enriched = emails = phones = skipped = org_calls = 0
     error = ""
+    org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     for row in lead_rows:
         website = (row["website"] if "website" in row.keys() else "") or ""
         if not website:
             continue
+
+        # Company firmographics: once per unique domain in this run (1 credit each),
+        # and never re-fetched for a lead that already has them.
+        have_org = ("employee_count" in row.keys()) and row["employee_count"] is not None
+        dom = "" if have_org else domain_of(website)
+        if dom and dom not in org_cache:
+            try:
+                org_cache[dom] = enrich_organization(website)
+                org_calls += 1
+            except Exception as e:
+                org_cache[dom] = {}
+                if not error:
+                    error = str(e)
+        org = org_cache.get(dom) or {}
+        if org:
+            conn.execute(
+                "UPDATE leads SET employee_count = ?, company_revenue = ?, "
+                "company_industry = ? WHERE id = ?",
+                (org.get("employee_count"), org.get("revenue", ""),
+                 org.get("industry", ""), row["id"]))
         have_contact = bool(((row["contact"] if "contact" in row.keys() else "") or "").strip())
         have_email = bool(((row["email"] if "email" in row.keys() else "") or "").strip())
         # Waterfall: Outscraper already got both -> don't spend an Apollo call.
@@ -162,4 +215,5 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
             enriched += 1
     conn.commit()
     return {"checked": checked, "enriched": enriched, "emails": emails,
-            "phones": phones, "skipped_already_enriched": skipped, "error": error}
+            "phones": phones, "skipped_already_enriched": skipped,
+            "org_calls": org_calls, "error": error}
