@@ -845,13 +845,28 @@ def export_vicidial():
     conn = get_db()
     leads = dialable_leads(conn, request.args)
 
+    # For a requeue export, surface VICIdial's callback_time (display only) so the
+    # redial list can be sorted by it in the file too. Only when callbacks exist.
+    cb_by_phone = {}
+    if request.args.get("requeue") == "active" and ops_dispositions.enabled():
+        try:
+            for c in ops_dispositions.fetch_callbacks():
+                p = normalize_phone(c.get("phone"))
+                if p and c.get("callback_time"):
+                    cb_by_phone[p] = c["callback_time"]
+        except Exception:
+            cb_by_phone = {}
+    include_cbt = any(normalize_phone(l["phone"]) in cb_by_phone for l in leads)
+
     fields = ["Name", "Full_Address", "Street_Address", "City", "State", "Zip",
               "Website", "Phone", "Email", "Category", "URL"]
+    if include_cbt:
+        fields = fields + ["Callback_Time"]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields)
     writer.writeheader()
     for lead in leads:
-        writer.writerow({
+        row = {
             "Name": lead["business_name"],
             "Full_Address": lead["address"],
             "Street_Address": _street_of(lead),
@@ -863,7 +878,11 @@ def export_vicidial():
             "Email": lead["email"],
             "Category": lead["category"],
             "URL": lead["maps_url"],
-        })
+        }
+        if include_cbt:
+            cbt = cb_by_phone.get(normalize_phone(lead["phone"]))
+            row["Callback_Time"] = str(cbt)[:16] if cbt else ""
+        writer.writerow(row)
     if request.args.get("requeue") == "active":
         parts = ["requeue"]
         for k in ("campaign", "industry", "rq_date"):

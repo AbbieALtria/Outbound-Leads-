@@ -237,6 +237,30 @@ def dashboard_rows(conn, campaign=None):
         d = dict(r)
         d["cap"] = _cap_for((d.get("last_disposition") or "").strip().upper())
         rows.append(d)
+
+    # Surface VICIdial's own callback_time next to callback-disposition rows, looked
+    # up by phone the same way the /requeue/callbacks view does. Display only —
+    # VICIdial's callback engine still owns the timing; we just show it. A VICIdial
+    # hiccup leaves callback_time absent rather than breaking the dashboard.
+    callback_rows = [d for d in rows if (d.get("last_disposition") or "").strip().upper()
+                     in ops_dispositions.CALLBACK_CODES]
+    if callback_rows and ops_dispositions.enabled():
+        try:
+            cb_by_phone = {}
+            for c in ops_dispositions.fetch_callbacks(campaign=campaign or None):
+                p = normalize_phone(c.get("phone"))
+                if p and c.get("callback_time"):
+                    cb_by_phone[p] = c["callback_time"]
+            for d in callback_rows:
+                cbt = cb_by_phone.get(normalize_phone(d.get("phone")))
+                if cbt:
+                    d["callback_time"] = cbt
+        except Exception:
+            pass
+
+    # Callback rows with a time float to the top, soonest first; a stable sort
+    # leaves everything else (no callback_time / non-callback) in its existing order.
+    rows.sort(key=lambda d: (0, str(d["callback_time"])) if d.get("callback_time") else (1,))
     return rows
 
 

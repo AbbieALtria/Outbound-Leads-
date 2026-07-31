@@ -106,7 +106,7 @@
       <td><strong>{{ r['business_name'] }}</strong></td>
       <td class="nowrap"><a href="tel:{{ r['phone'] }}">{{ r['phone'] }}</a></td>
       <td class="nowrap">{{ r['city'] }}{% if r['lead_state'] %}, {{ r['lead_state'] }}{% endif %}</td>
-      <td class="nowrap">{{ r['last_disposition'] }}</td>
+      <td class="nowrap">{{ r['last_disposition'] }}{% if r['callback_time'] %}<br><span class="dim small">📅 {{ (r['callback_time']|string)[:16] }}</span>{% endif %}</td>
       <td>{{ r['attempt_count'] }} / {{ r['cap'] }}</td>
       <td>
         {% if r['state'] == 'active' %}<span class="badge badge-ok">active</span>
