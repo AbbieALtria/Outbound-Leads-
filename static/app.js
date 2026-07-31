@@ -351,8 +351,9 @@ if (enrichBtn) {
       }
       eresult.className = "pull-result ok";
       eresult.textContent =
-        `Enriched ${r.enriched || 0} of ${r.checked || 0} — ` +
-        `${r.emails || 0} emails, ${r.phones || 0} direct dials.`;
+        `Enriched ${r.enriched || 0} of ${r.checked || 0} Apollo calls — ` +
+        `${r.emails || 0} emails, ${r.phones || 0} direct dials. ` +
+        `Skipped ${r.skipped_already_enriched || 0} already-enriched (Apollo credits saved).`;
       setTimeout(() => location.reload(), 1800);
     }
   };

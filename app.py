@@ -1565,7 +1565,7 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone):
     try:
         conn = db.connect()
         rows = conn.execute(
-            f"SELECT id, website FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
+            f"SELECT id, website, contact, email FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
             lead_ids,
         ).fetchall()
         result = contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
@@ -1596,12 +1596,14 @@ def enrich_contacts():
     conn = get_db()
     args = request.json or {}
     clause, params = lead_filters(args)
-    only_missing = args.get("only_missing", True)
-    extra = " AND website != ''" + (" AND contact = ''" if only_missing else "")
+    # All website leads in the view — the waterfall in enrich_leads() skips (for
+    # free) any that Outscraper already fully enriched, and only spends Apollo on
+    # the gaps. Selecting them all is what makes the "skipped" savings visible.
+    extra = " AND website != ''"
     sql = f"SELECT id FROM leads {clause or 'WHERE 1=1'}{extra}"
     lead_ids = [r["id"] for r in conn.execute(sql, params)]
     if not lead_ids:
-        return jsonify({"error": "No leads with a website need enrichment in this view"}), 400
+        return jsonify({"error": "No leads with a website in this view to enrich"}), 400
 
     reveal_email = db.get_setting(conn, "enrich_reveal_email", "1") == "1"
     reveal_phone = db.get_setting(conn, "enrich_reveal_phone", "0") == "1"
