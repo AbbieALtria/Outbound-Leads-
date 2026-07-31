@@ -68,4 +68,9 @@ CITIES_BY_STATE = {
     "New Brunswick": ["Moncton", "Saint John", "Fredericton", "Dieppe"],
     "Newfoundland and Labrador": ["St. John's", "Mount Pearl", "Corner Brook"],
     "Prince Edward Island": ["Charlottetown", "Summerside"],
+    # Territories — only a few real population centres each; the "+ add city"
+    # fallback covers anything else.
+    "Yukon": ["Whitehorse", "Dawson City", "Watson Lake"],
+    "Northwest Territories": ["Yellowknife", "Hay River", "Inuvik", "Fort Smith"],
+    "Nunavut": ["Iqaluit", "Rankin Inlet", "Arviat", "Baker Lake"],
 }
