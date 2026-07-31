@@ -81,8 +81,8 @@
   <div class="pull-controls" style="margin-top:8px; align-items:flex-start;">
     <label class="dim small" for="pull-locations" style="padding-top:6px;">Multiple locations<br><span class="dim">(optional)</span></label>
     <textarea id="pull-locations" rows="2" style="flex:1; min-width:280px; max-width:520px; font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px;"
-      placeholder="Sweep several places in one pull — one per line:  City, State  (e.g. Tampa, FL)"></textarea>
-    <span class="dim small" style="padding-top:6px;">When filled, this overrides the single City above and pulls every line{{ ' under this campaign' if selected_campaign else '' }} until the target is hit.</span>
+      placeholder="One per line — City, Province/State"></textarea>
+    <span class="dim small" style="padding-top:6px;">Sweeps several cities in a single pull instead of just the one selected above. Any business found in more than one of your listed cities is automatically flagged as multi-location — which scores higher for offers that reward it. The pull stops once your lead target is reached, combined across all cities.</span>
   </div>
   <div id="pull-progress" class="pull-progress" hidden>
     <span class="spinner"></span>
