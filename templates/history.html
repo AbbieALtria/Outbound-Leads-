@@ -69,6 +69,9 @@
     <a class="button" href="{{ url_for('export_vicidial', **f) }}">VICIdial CSV</a>
     <a class="button" href="{{ url_for('export_csv', **f) }}">Export CSV</a>
   </form>
+  {% if out_of_hours %}
+  <p class="warn" style="margin-top:8px;">⚠️ <strong>{{ out_of_hours }}</strong> of these leads {{ 'are' if out_of_hours != 1 else 'is' }} outside the recipient's legal calling window right now (CRTC / US TSR). Ensure VICIdial dials by the recipient's time zone — or <a href="{{ url_for('export_vicidial', enforce_hours=1, **f) }}">export in-hours only</a>.</p>
+  {% endif %}
 </section>
 
 <p class="dim">{{ leads | length }} lead(s)</p>

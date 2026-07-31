@@ -118,6 +118,9 @@
        title="This pull's leads, VICIdial loader format, DNC + invalid phones excluded">VICIdial CSV</a>
     <a class="button" href="{{ url_for('export_csv', run_id=run_id) }}">Export CSV</a>
   </div>
+  {% if out_of_hours %}
+  <p class="warn" style="margin-top:8px;">⚠️ <strong>{{ out_of_hours }}</strong> lead{{ 's' if out_of_hours != 1 }} {{ 'are' if out_of_hours != 1 else 'is' }} outside the recipient's legal calling window right now (CRTC 9:00-21:30 wkdays / 10:00-18:00 wkends; US TSR 8:00-21:00). Make sure VICIdial dials by the recipient's time zone — or <a href="{{ url_for('export_vicidial', run_id=run_id, enforce_hours=1) }}">export in-hours only</a>.</p>
+  {% endif %}
 </section>
 <div id="verify-result" class="pull-result" hidden></div>
 <div id="enrich-result" class="pull-result" hidden></div>

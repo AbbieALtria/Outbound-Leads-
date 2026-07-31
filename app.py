@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 
+import compliance
 import contacts
 import db
 import dialer_import
@@ -638,6 +639,7 @@ def dashboard():
     active_campaign = db.offer_for_campaign(conn, selected_campaign)
     return render_template(
         "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
+        out_of_hours=(out_of_hours_count(conn, {"run_id": run_id}) if run_id else 0),
         industries=industries, statuses=db.LEAD_STATUSES, counts=counts,
         current_status=request.args.get("status", ""),
         total_leads=total_leads,
@@ -672,6 +674,7 @@ def history():
         countries=distinct("country"), states=distinct("state"), cities=distinct("city"),
         industries=industries, statuses=db.LEAD_STATUSES, f=request.args,
         user_list=user_list,
+        out_of_hours=out_of_hours_count(conn, request.args),
     )
 
 
@@ -789,6 +792,10 @@ def dialable_leads(conn, args):
     plus VOIP/toll-free dropped when the setting is on. One place so every dial
     export stays consistent."""
     drop_voip = db.get_setting(conn, "drop_voip_export", "0") == "1"
+    # Calling-hours: OFF by default (a batch is dialed over time, so VICIdial's
+    # per-timezone call-time settings are the real gate). enforce_hours=1 drops
+    # leads outside their legal window right now — for dialing the file immediately.
+    enforce_hours = args.get("enforce_hours") == "1"
     blocked = requeue.blocked_lead_ids(conn)
     suppressed = requeue.suppressed_phones(conn)
     out = []
@@ -804,8 +811,19 @@ def dialable_leads(conn, args):
         if drop_voip and ("voip" in (lead["phone_type"] or "").lower()
                           or _is_toll_free(lead["phone"])):
             continue
+        if enforce_hours and not compliance.within_calling_hours(
+                lead["country"], lead["state"], lead["city"])[0]:
+            continue  # outside the recipient's legal calling window (CRTC/TSR)
         out.append(lead)
     return out
+
+
+def out_of_hours_count(conn, args):
+    """How many export-eligible leads are outside their legal calling window right
+    now — for the export-time compliance warning (does not exclude anything)."""
+    base = {k: v for k, v in dict(args).items() if k != "enforce_hours"}
+    return sum(1 for l in dialable_leads(conn, base)
+               if not compliance.within_calling_hours(l["country"], l["state"], l["city"])[0])
 
 
 def _street_of(lead):
