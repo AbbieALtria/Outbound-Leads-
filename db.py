@@ -83,7 +83,9 @@ OFFER_PRESETS = {
         "name": "ICT / Business Communications — Appointment", "audience": "b2b",
         "goal": "appointment",
         "rules": {
-            "has_website": {"points": 10, "hook": "Established business — real comms/network footprint to modernize"},
+            "multi_location": {"points": 50, "hook": "{location_count} locations found — needs unified comms/network across sites"},
+            "low_reviews":     {"points": 10, "hook": "Only {reviews} reviews — still growing, likely upgrading infrastructure"},
+            "has_website":     {"points": 5,  "hook": "Established business — real comms/network footprint to modernize"},
         },
     },
     # --- B2C presets (framework). B2C leads come from a consumer-data source,
@@ -264,6 +266,9 @@ LEAD_EXTRA_COLUMNS = {
     "reviews": "INTEGER",
     "rating": "REAL",
     "unclaimed": "INTEGER",  # 1 = Google listing unclaimed (Outscraper verified=False)
+    # How many distinct locations this business was found at in its pull sweep
+    # (>=2 => multi-site; powers the ICT multi_location signal). 1 = single-location.
+    "location_count": "INTEGER NOT NULL DEFAULT 1",
     # Market + provenance. B2B leads are pulled from Maps; B2C leads arrive via
     # the intake API / CSV import and MUST carry consent for compliant calling.
     "market_type": "TEXT NOT NULL DEFAULT 'b2b'",       # b2b | b2c

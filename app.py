@@ -47,8 +47,8 @@ users.ensure_admin(_seed_conn)
 
 # Bump when scoring/hook logic changes, so stored score+call_hook are refreshed
 # once on the next start instead of showing stale hooks. Bumped to 3 for the
-# per-campaign scoring model (each campaign's leads scored under its own offer).
-SCORING_VERSION = "3"
+# per-campaign scoring model; 4 for the ICT multi_location signal + rules.
+SCORING_VERSION = "4"
 if db.get_setting(_seed_conn, "scoring_version") != SCORING_VERSION:
     scoring.rescore_everything(_seed_conn)
     db.set_setting(_seed_conn, "scoring_version", SCORING_VERSION)

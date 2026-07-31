@@ -337,6 +337,47 @@ def _is_cancelled(conn, run_id):
     return bool(row and row["cancel"])
 
 
+def _norm_name(name):
+    """Loose key for matching the same business across locations: lowercased,
+    punctuation + common legal suffixes stripped."""
+    n = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower())
+    n = re.sub(r"\b(inc|llc|ltd|co|corp|corporation|company|the)\b", " ", n)
+    return re.sub(r"\s+", " ", n).strip()
+
+
+def _stamp_location_counts(conn, run_id, rules, log=print):
+    """After a multi-city sweep: group this run's leads by normalized business
+    name; a name at 2+ DISTINCT addresses is a multi-site prospect. Stamp
+    location_count on those leads, then rescore the run's leads so the
+    multi_location signal is reflected in score + hook."""
+    from collections import defaultdict
+    rows = conn.execute(
+        "SELECT id, business_name, address FROM leads WHERE run_id = ?", (run_id,)
+    ).fetchall()
+    addrs, ids = defaultdict(set), defaultdict(list)
+    for r in rows:
+        key = _norm_name(r["business_name"])
+        if not key:
+            continue
+        addrs[key].add((r["address"] or "").strip().lower())
+        ids[key].append(r["id"])
+    stamped = 0
+    for key, lead_ids in ids.items():
+        count = len(addrs[key])
+        if count >= 2:
+            conn.execute(
+                f"UPDATE leads SET location_count = ? WHERE id IN ({','.join('?' * len(lead_ids))})",
+                [count, *lead_ids])
+            stamped += len(lead_ids)
+    if stamped:
+        conn.commit()
+        scoring._rescore_rows(conn, conn.execute(
+            "SELECT * FROM leads WHERE run_id = ?", (run_id,)), rules)
+        conn.commit()
+        log(f"  multi-location: {stamped} lead(s) marked multi-site, rescored")
+    return stamped
+
+
 def run_pull(industry_slugs, target, api_key, location=None, locations=None,
              run_id=None, campaign_id=None, db_path=db.DB_FILE, log=print):
     """Execute one pull. Returns the number of leads added.
@@ -481,9 +522,11 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     email = extract_email(place)
 
                     # Score via the active campaign, off the neutral signals.
+                    # location_count is 1 here (single-location assumption); a
+                    # post-sweep grouping pass fixes multi-site businesses + rescores.
                     signal_lead = {
                         "website": website, "email": email, "reviews": reviews,
-                        "rating": rating, "unclaimed": unclaimed,
+                        "rating": rating, "unclaimed": unclaimed, "location_count": 1,
                         "city": place.get("city") or target_loc["city"],
                         "state": place.get("state") or place.get("region") or target_loc["state"],
                     }
@@ -534,6 +577,12 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
 
         if added_total == 0 and query_errors > 0:
             raise RuntimeError(f"All {query_errors} queries failed. Last error: {last_error}")
+
+        # Multi-location scoring pass: across a multi-city sweep, mark businesses
+        # found at 2+ addresses as multi-site and rescore. Single-location pulls
+        # (one target) keep location_count = 1, so nothing to do.
+        if len(targets) >= 2 and new_lead_ids and run_id is not None:
+            _stamp_location_counts(conn, run_id, rules, log=log)
 
         # Suppress any freshly-pulled number already on the DNC list.
         blocked = dnc.scrub_leads(conn, new_lead_ids)

@@ -22,13 +22,14 @@ SIGNALS = {
     "few_reviews": lambda l: l["reviews"] is not None and 10 <= l["reviews"] < 25,
     "low_rating":  lambda l: l["rating"] is not None and l["reviews"] not in (None, 0)
                              and l["rating"] < 4.0,
+    "multi_location": lambda l: (l["location_count"] or 0) >= 2,
 }
 
 
 # Signals that only make sense for B2B (business) leads. They must never fire
 # for a B2C consumer lead, even if a B2B campaign happens to be active.
 B2B_ONLY_SIGNALS = {"no_website", "has_website", "unclaimed",
-                    "low_reviews", "few_reviews", "low_rating"}
+                    "low_reviews", "few_reviews", "low_rating", "multi_location"}
 
 
 def _mv(lead, key, default=None):
@@ -41,7 +42,8 @@ def _mv(lead, key, default=None):
 
 def _fmt(hook, lead):
     try:
-        return hook.format(reviews=_mv(lead, "reviews"), rating=_mv(lead, "rating"))
+        return hook.format(reviews=_mv(lead, "reviews"), rating=_mv(lead, "rating"),
+                           location_count=_mv(lead, "location_count", 1))
     except Exception:
         return hook
 
