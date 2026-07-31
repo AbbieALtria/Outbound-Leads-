@@ -117,12 +117,15 @@
     <a class="dim small" href="{{ url_for('history') }}">View all {{ total_leads }} leads in History →</a>
   </div>
   <div class="stats">
-    <button id="verify-btn" class="button" {{ 'disabled' if not api_key_set or not run_id }}
+    <button id="verify-btn" class="button" {{ 'disabled' if not api_key_set or not leads }}
       data-run_id="{{ run_id or '' }}"
       title="Check this pull's phone numbers via Outscraper (costs credits); marks dead lines invalid">Verify phones</button>
     {% if apollo_enabled %}
-    <button id="enrich-btn" class="button" {{ 'disabled' if not run_id }}
+    <button id="enrich-btn" class="button" {{ 'disabled' if not leads }}
       data-run_id="{{ run_id or '' }}"
+      data-reveal-email="{{ '1' if enrich_reveal_email else '0' }}"
+      data-reveal-phone="{{ '1' if enrich_reveal_phone else '0' }}"
+      data-settings-url="{{ url_for('settings') }}"
       title="Find the decision-maker (name/title, and direct dial if enabled) via Apollo for this pull's leads that have a website">Enrich contacts</button>
     {% endif %}
     <a class="button primary-outline" href="{{ url_for('export_vicidial', run_id=run_id) }}"
@@ -148,8 +151,27 @@
 <div id="verify-result" class="pull-result" hidden></div>
 <div id="enrich-result" class="pull-result" hidden></div>
 
-{% with show_appointment = active_campaign and active_campaign['goal'] == 'appointment' %}
+{% with show_appointment = active_campaign and active_campaign['goal'] == 'appointment', select_leads = true %}
   {% include "_lead_table.html" %}
 {% endwith %}
+
+{# Confirmation modal for Apollo enrichment — nothing is spent until confirmed. #}
+<div id="enrich-modal" class="modal-backdrop" hidden>
+  <div class="modal-card">
+    <h3 style="margin-top:0;">⚠️ Contact Enrichment (Apollo) — this will spend money</h3>
+    <p id="enrich-modal-scope"></p>
+    <ul class="small" style="line-height:1.6;">
+      <li><strong>Name + title lookup is FREE.</strong> Knowing who to ask for gets you past most gatekeepers.</li>
+      <li><strong>Email reveal costs 1 Apollo credit per lead</strong> — only runs if “reveal email” is on in Settings (currently: <strong id="enrich-modal-email"></strong>).</li>
+      <li><strong>Direct-dial/mobile reveal costs 8 Apollo credits per lead</strong> — off by default; turn on only for your best targets (e.g. multi-location accounts) (currently: <strong id="enrich-modal-phone"></strong>).</li>
+      <li><strong>Estimated cost for this run:</strong> <span id="enrich-modal-cost"></span> All credits come out of your Apollo plan.</li>
+    </ul>
+    <p class="dim small">Reveal toggles live in <a href="{{ url_for('settings') }}">Settings</a>.</p>
+    <p style="text-align:right;margin-bottom:0;">
+      <button type="button" class="button" id="enrich-cancel">Cancel</button>
+      <button type="button" class="primary" id="enrich-confirm">Yes, enrich these leads</button>
+    </p>
+  </div>
+</div>
 
 {% endblock %}

@@ -4,6 +4,7 @@
 <table class="leads">
   <thead>
     <tr>
+      {% if select_leads %}<th><input type="checkbox" id="lead-select-all" title="Select all"></th>{% endif %}
       <th>#</th>
       <th>Business</th>
       <th>Phone</th>
@@ -19,6 +20,7 @@
   <tbody>
     {% for lead in leads %}
     <tr data-lead-id="{{ lead['id'] }}" class="status-{{ lead['status'] }}">
+      {% if select_leads %}<td><input type="checkbox" class="lead-select" value="{{ lead['id'] }}"></td>{% endif %}
       <td class="dim">{{ loop.index }}</td>
       <td>
         <strong>{{ lead['business_name'] }}</strong>

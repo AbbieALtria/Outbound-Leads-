@@ -83,6 +83,20 @@ details.add-user { margin-top: 12px; }
 details.add-user > summary { list-style: none; }
 details.add-user > summary::-webkit-details-marker { display: none; }
 
+/* ---- modal ---- */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(16, 24, 39, 0.55);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+  padding: 20px;
+}
+.modal-backdrop[hidden] { display: none !important; }
+.modal-card {
+  background: var(--card); border-radius: 12px; padding: 20px 24px;
+  max-width: 620px; width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  max-height: 90vh; overflow-y: auto;
+}
+.modal-card h3 { color: var(--amber); }
+
 /* ---- help ---- */
 .help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 14px; margin-top: 14px; }

@@ -440,22 +440,40 @@ if (enrichBtn) {
     }
   };
 
-  enrichBtn.addEventListener("click", async () => {
-    if (!confirm("Find the decision-maker for this pull's leads (that have a website) " +
-                 "via Apollo? Names & titles are free; email/direct-dial reveal spends " +
-                 "Apollo credits per lead (set in Settings).")) {
-      return;
-    }
+  const selectedLeadIds = () =>
+    [...document.querySelectorAll(".lead-select:checked")].map((cb) => cb.value);
+
+  // "Select all" header checkbox + keeping it in sync with the rows.
+  const selectAll = document.getElementById("lead-select-all");
+  if (selectAll) {
+    selectAll.addEventListener("change", () => {
+      document.querySelectorAll(".lead-select").forEach((cb) => {
+        cb.checked = selectAll.checked;
+      });
+    });
+    document.querySelectorAll(".lead-select").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const all = document.querySelectorAll(".lead-select").length;
+        const on = selectedLeadIds().length;
+        selectAll.checked = on === all;
+        selectAll.indeterminate = on > 0 && on < all;
+      });
+    });
+  }
+
+  // --- confirmation modal: nothing is spent until the user confirms ---
+  const modal = document.getElementById("enrich-modal");
+  const runEnrich = async () => {
+    const ids = selectedLeadIds();
     enrichBtn.disabled = true;
     enrichBtn.textContent = "Enriching…";
     eresult.hidden = false;
     eresult.className = "pull-result";
     eresult.textContent = "Looking up decision-makers…";
     try {
-      const r = await postJSON("/api/enrich_contacts", {
-        run_id: enrichBtn.dataset.run_id || "",
-        only_missing: true,
-      });
+      const payload = { run_id: enrichBtn.dataset.run_id || "", only_missing: true };
+      if (ids.length) payload.lead_ids = ids;      // only the checked rows
+      const r = await postJSON("/api/enrich_contacts", payload);
       eresult.textContent = `Enriching ${r.count} leads…`;
       pollEnrich();
     } catch (e) {
@@ -464,5 +482,34 @@ if (enrichBtn) {
       eresult.className = "pull-result err";
       eresult.textContent = e.message;
     }
+  };
+
+  const closeModal = () => { if (modal) modal.hidden = true; };
+
+  enrichBtn.addEventListener("click", () => {
+    const ids = selectedLeadIds();
+    const total = document.querySelectorAll(".lead-select").length;
+    const n = ids.length || total;
+    const revealEmail = enrichBtn.dataset.revealEmail === "1";
+    const revealPhone = enrichBtn.dataset.revealPhone === "1";
+    if (!modal) { runEnrich(); return; }   // no modal markup -> old behaviour
+
+    document.getElementById("enrich-modal-scope").innerHTML =
+      `You're about to enrich <strong>${n}</strong> lead${n === 1 ? "" : "s"} ` +
+      `(${ids.length ? "selected" : "this entire batch"}).`;
+    document.getElementById("enrich-modal-email").textContent = revealEmail ? "ON" : "OFF";
+    document.getElementById("enrich-modal-phone").textContent = revealPhone ? "ON" : "OFF";
+    document.getElementById("enrich-modal-cost").textContent =
+      (revealEmail ? `up to ${n} credit${n === 1 ? "" : "s"} (email)` : "0 (email reveal is off)") +
+      " + " +
+      (revealPhone ? `up to ${n * 8} credits (direct dial)` : "0 (direct dial is off)") + ".";
+    modal.hidden = false;
   });
+
+  document.getElementById("enrich-cancel")?.addEventListener("click", closeModal);
+  document.getElementById("enrich-confirm")?.addEventListener("click", () => {
+    closeModal();
+    runEnrich();      // only now does anything get spent
+  });
+  modal?.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
 }

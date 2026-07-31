@@ -719,6 +719,9 @@ def dashboard():
         last_country=db.get_setting(conn, "last_country", "United States"),
         api_key_set=bool(pipeline.get_api_key()),
         apollo_enabled=contacts.enabled(),
+        # Drive the enrichment confirmation modal's cost estimate.
+        enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
+        enrich_reveal_phone=db.get_setting(conn, "enrich_reveal_phone", "0") == "1",
     )
 
 
@@ -1693,13 +1696,22 @@ def enrich_contacts():
                         "Variables to enable contact enrichment."}), 400
     conn = get_db()
     args = request.json or {}
-    clause, params = lead_filters(args)
-    # All website leads in the view — the waterfall in enrich_leads() skips (for
-    # free) any that Outscraper already fully enriched, and only spends Apollo on
-    # the gaps. Selecting them all is what makes the "skipped" savings visible.
-    extra = " AND website != ''"
-    sql = f"SELECT id FROM leads {clause or 'WHERE 1=1'}{extra}"
-    lead_ids = [r["id"] for r in conn.execute(sql, params)]
+    picked = args.get("lead_ids")
+    if isinstance(picked, list) and picked:
+        # Explicit row selection from the dashboard: use exactly these leads
+        # (still only the ones that have a website to look up).
+        ids = [int(i) for i in picked if str(i).strip().isdigit()]
+        ph = ",".join("?" * len(ids)) or "NULL"
+        lead_ids = [r["id"] for r in conn.execute(
+            f"SELECT id FROM leads WHERE id IN ({ph}) AND website != ''", ids)]
+    else:
+        clause, params = lead_filters(args)
+        # All website leads in the view — the waterfall in enrich_leads() skips (for
+        # free) any that Outscraper already fully enriched, and only spends Apollo on
+        # the gaps. Selecting them all is what makes the "skipped" savings visible.
+        extra = " AND website != ''"
+        sql = f"SELECT id FROM leads {clause or 'WHERE 1=1'}{extra}"
+        lead_ids = [r["id"] for r in conn.execute(sql, params)]
     if not lead_ids:
         return jsonify({"error": "No leads with a website in this view to enrich"}), 400
 
