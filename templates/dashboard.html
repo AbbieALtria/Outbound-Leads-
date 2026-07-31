@@ -74,8 +74,21 @@
       <button type="submit">Add</button>
     </form>
 
+    {# Same review-and-approve flow as the campaign page, surfaced here where you
+       actually notice a missing vertical. Needs a campaign for context. #}
+    {% if selected_campaign and current_user and current_user['role'] == 'admin' %}
+    <form method="post" action="{{ url_for('campaign_suggest_industries', campaign_id=selected_campaign['id']) }}">
+      <input type="hidden" name="next" value="dashboard">
+      <button type="submit" class="button"
+              title="Ask Claude for verticals related to this campaign — you review and approve each one before it's added">✨ Suggest</button>
+    </form>
+    {% endif %}
+
     {% if not api_key_set %}
       <span class="warn">OUTSCRAPER_API_KEY not set — pulling disabled (see Settings)</span>
+    {% endif %}
+    {% if request.args.get('added') %}
+      <span class="pull-result ok" style="margin:0;">Added {{ request.args.get('added') }} industry(ies) — now in the picker.</span>
     {% endif %}
   </div>
   <div class="pull-controls" style="margin-top:8px; align-items:flex-start;">

@@ -12,6 +12,7 @@
 
   {% if suggestions %}
   <form method="post" action="{{ url_for('campaign_approve_industries', campaign_id=campaign['id']) }}">
+    <input type="hidden" name="next" value="{{ next }}">
     <div class="table-wrap">
     <table class="leads">
       <thead>
@@ -40,14 +41,14 @@
     </div>
     <p style="margin-top:10px;">
       <button type="submit" class="primary">Add checked industries</button>
-      <a class="button" href="{{ url_for('campaign_detail', campaign_id=campaign['id']) }}">Cancel</a>
+      <a class="button" href="{{ url_for('dashboard', campaign_id=campaign['id']) if next == 'dashboard' else url_for('campaign_detail', campaign_id=campaign['id']) }}">Cancel</a>
     </p>
   </form>
   {% elif not error %}
   <p class="empty">No new suggestions — your catalog may already cover this campaign's verticals.</p>
-  <p><a class="button" href="{{ url_for('campaign_detail', campaign_id=campaign['id']) }}">← Back to campaign</a></p>
+  <p><a class="button" href="{{ url_for('dashboard', campaign_id=campaign['id']) if next == 'dashboard' else url_for('campaign_detail', campaign_id=campaign['id']) }}">← Back</a></p>
   {% else %}
-  <p><a class="button" href="{{ url_for('campaign_detail', campaign_id=campaign['id']) }}">← Back to campaign</a></p>
+  <p><a class="button" href="{{ url_for('dashboard', campaign_id=campaign['id']) if next == 'dashboard' else url_for('campaign_detail', campaign_id=campaign['id']) }}">← Back</a></p>
   {% endif %}
 </section>
 

@@ -447,7 +447,8 @@ def campaign_suggest_industries(campaign_id):
         except Exception as e:
             error = f"Couldn't get suggestions: {e}"
     return render_template("campaign_suggestions.html", campaign=camp,
-                           suggestions=suggestions, error=error)
+                           suggestions=suggestions, error=error,
+                           next=request.form.get("next", ""))
 
 
 @app.route("/campaigns/<int:campaign_id>/approve_industries", methods=["POST"])
@@ -458,14 +459,23 @@ def campaign_approve_industries(campaign_id):
     if guard:
         return guard
     conn = get_db()
-    added = 0
+    added, first_slug = 0, ""
     for idx in request.form.getlist("approve"):
         label = request.form.get(f"label_{idx}", "")
         query = request.form.get(f"query_{idx}", "")
         chains = [c.strip() for c in request.form.get(f"chains_{idx}", "").split(",")
                   if c.strip()]
-        if create_industry(conn, label, query, chains):
+        slug = create_industry(conn, label, query, chains)
+        if slug:
             added += 1
+            first_slug = first_slug or slug
+    # Approved from the dashboard: preselect the first new industry for the next
+    # pull and go back there, same as the manual '+ add industry' quick-add.
+    if request.form.get("next") == "dashboard":
+        if first_slug:
+            db.set_setting(conn, "default_industry", first_slug)
+        conn.commit()
+        return redirect(url_for("dashboard", campaign_id=campaign_id, added=added))
     conn.commit()
     return redirect(url_for("campaign_detail", campaign_id=campaign_id, added=added))
 
