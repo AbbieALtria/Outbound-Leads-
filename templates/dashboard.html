@@ -121,6 +121,18 @@
   {% if out_of_hours %}
   <p class="warn" style="margin-top:8px;">⚠️ <strong>{{ out_of_hours }}</strong> lead{{ 's' if out_of_hours != 1 }} {{ 'are' if out_of_hours != 1 else 'is' }} outside the recipient's legal calling window right now (CRTC 9:00-21:30 wkdays / 10:00-18:00 wkends; US TSR 8:00-21:00). Make sure VICIdial dials by the recipient's time zone — or <a href="{{ url_for('export_vicidial', run_id=run_id, enforce_hours=1) }}">export in-hours only</a>.</p>
   {% endif %}
+  {% if batch %}
+  <div class="rate-batch" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">
+    <form method="post" action="{{ url_for('pull_run_rate', run_id=batch['id']) }}" class="inline-form" style="gap:6px;">
+      <span class="dim small">Rate this batch's quality (optional):</span>
+      <button type="submit" name="rating" value="good" class="button {{ 'primary' if batch['user_rating'] == 'good' }}">👍 Good</button>
+      <button type="submit" name="rating" value="bad" class="button {{ 'danger' if batch['user_rating'] == 'bad' }}">👎 Not what I expected</button>
+      <input type="text" name="comment" value="{{ batch['user_comment'] or '' }}" placeholder="optional note on list quality…" style="width:240px;">
+      <button type="submit" class="button">Save note</button>
+      {% if batch['user_rating'] %}<span class="dim small">· rated {{ batch['user_rating'] }}</span>{% endif %}
+    </form>
+  </div>
+  {% endif %}
 </section>
 <div id="verify-result" class="pull-result" hidden></div>
 <div id="enrich-result" class="pull-result" hidden></div>

@@ -898,6 +898,21 @@ def export_vicidial():
     )
 
 
+@app.route("/pull_runs/<int:run_id>/rate", methods=["POST"])
+def pull_run_rate(run_id):
+    """Optional batch-level quality review (pre-dial list quality — separate from
+    per-lead call-outcome notes). Any signed-in user; never required."""
+    conn = get_db()
+    rating = request.form.get("rating")
+    if rating in ("good", "bad"):
+        conn.execute("UPDATE pull_runs SET user_rating = ? WHERE id = ?", (rating, run_id))
+    if "comment" in request.form:
+        conn.execute("UPDATE pull_runs SET user_comment = ? WHERE id = ?",
+                     (request.form.get("comment", "").strip(), run_id))
+    conn.commit()
+    return redirect(url_for("dashboard", run_id=run_id))
+
+
 # ---------------------------------------------------------------- requeue
 
 def run_requeue_now(day=None, campaign=None, dry_run=False):

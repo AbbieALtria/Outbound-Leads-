@@ -222,7 +222,10 @@ SEED_INDUSTRIES = {
 }
 
 DEFAULT_SETTINGS = {
-    "target_leads_per_day": "100",
+    # Pre-filled lead-count default on the dashboard. Kept small so a first test
+    # pull for a new campaign doesn't burn credits before anyone checks quality;
+    # the user can type a larger number for any pull.
+    "target_leads_per_day": "20",
     "buffer_multiplier": "2.0",
     "default_industry": "hvac",
     # Ask Outscraper for emails + contact people (decision-makers). Costs extra
@@ -297,6 +300,9 @@ PULL_RUN_EXTRA_COLUMNS = {
     "cancel": "INTEGER NOT NULL DEFAULT 0",
     "campaign_id": "INTEGER",   # the campaign this pull ran for (NULL = ad-hoc/legacy)
     "user_id": "INTEGER",       # who ran the pull (for per-user quotas; NULL = system/legacy)
+    # Optional batch-level quality review (pre-dial list quality, NOT call outcome).
+    "user_rating": "TEXT",      # 'good' | 'bad' | NULL (not rated)
+    "user_comment": "TEXT",
 }
 
 # Per-user limits (admin-set). 0 = unlimited; allowed_campaigns '' = all campaigns.

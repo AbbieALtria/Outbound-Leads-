@@ -11,7 +11,7 @@
 <div class="table-wrap">
 <table class="leads">
   <thead>
-    <tr><th>When</th><th>User</th><th>Campaign</th><th>Industry</th><th>Leads</th><th>Status</th><th></th></tr>
+    <tr><th>When</th><th>User</th><th>Campaign</th><th>Industry</th><th>Leads</th><th>Status</th><th>Rating</th><th></th></tr>
   </thead>
   <tbody>
     {% for r in runs %}
@@ -26,6 +26,10 @@
         {% elif r['status'] == 'running' %}<span class="badge">running</span>
         {% elif r['status'] == 'error' %}<span class="badge badge-hot">error</span>
         {% else %}<span class="badge">{{ r['status'] or '—' }}</span>{% endif %}
+      </td>
+      <td class="nowrap small">
+        {% if r['user_rating'] == 'good' %}👍{% elif r['user_rating'] == 'bad' %}👎{% else %}<span class="dim">—</span>{% endif %}
+        {% if r['user_comment'] %}<span class="dim" title="{{ r['user_comment'] }}"> {{ r['user_comment'][:24] }}{{ '…' if r['user_comment']|length > 24 }}</span>{% endif %}
       </td>
       <td class="nowrap">{% if r['lead_count'] %}<a class="button" href="{{ url_for('history', run_id=r['id']) }}">View leads</a>{% endif %}</td>
     </tr>
