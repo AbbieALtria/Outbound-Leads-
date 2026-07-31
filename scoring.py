@@ -9,6 +9,38 @@ just one offer preset among many.
 """
 
 import json
+from datetime import date, datetime
+
+
+def _parse_date(s):
+    """Parse assorted vendor date formats to a date, or None."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "")).date()
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d", "%m-%d-%Y",
+                "%b %d, %Y", "%d %b %Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _within_days(datestr, days):
+    """True when `datestr` is within the last `days` (small future slack for TZ)."""
+    d = _parse_date(datestr)
+    if d is None:
+        return False
+    delta = (date.today() - d).days
+    return -1 <= delta <= days
+
 
 # Each signal: does it apply to this lead? Returns True/False.
 # lead is a sqlite3.Row (or dict). Neutral columns may be NULL (unknown) on
@@ -23,13 +55,17 @@ SIGNALS = {
     "low_rating":  lambda l: l["rating"] is not None and l["reviews"] not in (None, 0)
                              and l["rating"] < 4.0,
     "multi_location": lambda l: (l["location_count"] or 0) >= 2,
+    # B2B intent signals matched from an external source (Leadfeeder/Bombora/etc).
+    "recent_site_visitor": lambda l: _within_days(_mv(l, "site_last_visit_date"), 30),
+    "active_intent": lambda l: _within_days(_mv(l, "intent_last_seen_date"), 30),
 }
 
 
 # Signals that only make sense for B2B (business) leads. They must never fire
 # for a B2C consumer lead, even if a B2B campaign happens to be active.
 B2B_ONLY_SIGNALS = {"no_website", "has_website", "unclaimed",
-                    "low_reviews", "few_reviews", "low_rating", "multi_location"}
+                    "low_reviews", "few_reviews", "low_rating", "multi_location",
+                    "recent_site_visitor", "active_intent"}
 
 
 def _mv(lead, key, default=None):
@@ -42,8 +78,14 @@ def _mv(lead, key, default=None):
 
 def _fmt(hook, lead):
     try:
-        return hook.format(reviews=_mv(lead, "reviews"), rating=_mv(lead, "rating"),
-                           location_count=_mv(lead, "location_count", 1))
+        return hook.format(
+            reviews=_mv(lead, "reviews"), rating=_mv(lead, "rating"),
+            location_count=_mv(lead, "location_count", 1),
+            site_visit_count=_mv(lead, "site_visit_count"),
+            intent_topic=_mv(lead, "intent_topic", ""),
+            site_last_visit_date=_mv(lead, "site_last_visit_date", ""),
+            intent_last_seen_date=_mv(lead, "intent_last_seen_date", ""),
+        )
     except Exception:
         return hook
 
@@ -106,6 +148,28 @@ def rescore_campaign(conn, campaign):
     n = _rescore_rows(conn, rows, rules)
     conn.commit()
     return n
+
+
+def rescore_leads(conn, ids):
+    """Rescore specific leads, each under its own campaign's offer. Used after an
+    intent-signal intake stamps signal columns, so the new score takes effect now."""
+    import db
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return 0
+    ph = ",".join("?" * len(ids))
+    rows = conn.execute(f"SELECT * FROM leads WHERE id IN ({ph})", ids).fetchall()
+    cache = {}
+    for lead in rows:
+        cid = lead["campaign_id"]
+        if cid not in cache:
+            camp = conn.execute("SELECT * FROM campaigns WHERE id = ?", (cid,)).fetchone() if cid else None
+            cache[cid] = load_rules(db.offer_for_campaign(conn, camp))
+        score, hook = evaluate(lead, cache[cid])
+        conn.execute("UPDATE leads SET score = ?, call_hook = ? WHERE id = ?",
+                     (score, hook, lead["id"]))
+    conn.commit()
+    return len(rows)
 
 
 def rescore_everything(conn):

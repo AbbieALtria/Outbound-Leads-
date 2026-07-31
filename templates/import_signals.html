@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Intent Signals — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<div class="settings-grid">
+  <section class="card">
+    <h2>Import B2B intent signals (CSV)</h2>
+    <p class="dim">Upload an export from a <strong>site-visitor</strong> tracker (Leadfeeder / Dealfront /
+    Albacross) or an <strong>intent</strong> tool (Bombora / G2). Each row is matched to an existing lead
+    by website domain first, then business name — <em>no new lead is created</em> (these sources have no
+    phone). Unmatched rows are kept for review. Columns are auto-detected (company/account, domain/website,
+    visits/score, last_seen date, and topic for intent).</p>
+
+    <form method="post" enctype="multipart/form-data" class="inline-form">
+      <label class="dim small">Signal type
+        <select name="kind">
+          <option value="site_visitor">Site visitor (Leadfeeder / Albacross)</option>
+          <option value="intent">Buyer intent (Bombora / G2)</option>
+        </select>
+      </label>
+      <input type="file" name="file" accept=".csv,text/csv" required>
+      <button type="submit" class="primary">Import</button>
+    </form>
+
+    {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
+
+    {% if summary %}
+      <div class="import-summary">
+        <h2>Imported {{ summary['filename'] }} <span class="dim small">({{ summary['kind'] }})</span></h2>
+        <ul>
+          <li><strong>{{ summary['matched'] }}</strong> matched onto existing leads (scored + stamped)</li>
+          <li><strong>{{ summary['unmatched'] }}</strong> unmatched — kept for review/backfill</li>
+          <li><strong>{{ summary['invalid'] }}</strong> rows skipped (no company or domain)</li>
+          <li class="dim">{{ summary['total'] }} rows processed</li>
+        </ul>
+      </div>
+    {% endif %}
+    {% if unmatched %}
+    <p><a class="button" href="{{ url_for('signals_unmatched') }}">Review {{ unmatched }} unmatched signal{{ 's' if unmatched != 1 }} →</a></p>
+    {% endif %}
+    <p class="dim small">To use these in scoring, add <code>recent_site_visitor</code> / <code>active_intent</code>
+    to the offer's rules for the campaign that wants them — they're opt-in, not on by default.</p>
+  </section>
+
+  <section class="card">
+    <h2>Real-time signal webhook</h2>
+    <p class="dim small">Your intent vendor can POST signals in real time:</p>
+    <table class="mini">
+      <tr><td><strong>Endpoint</strong></td><td><code>POST /api/signal</code></td></tr>
+      <tr><td><strong>Header</strong></td><td><code>X-Signal-Key: &lt;your key&gt;</code></td></tr>
+      <tr><td><strong>Body</strong></td><td><code>application/json</code></td></tr>
+    </table>
+    <p class="dim small">Example body:</p>
+    <pre class="code-block">{
+  "kind": "site_visitor",       // or "intent"
+  "company_name": "Acme Roofing",
+  "domain": "acmeroofing.com",
+  "signal_strength": 7,          // visits or intent score
+  "last_seen_date": "2026-07-20",
+  "topic": "VoIP phone systems"  // intent only
+}</pre>
+    {% if signal_enabled %}
+      <p class="badge badge-ok">signals enabled</p>
+    {% else %}
+      <p class="badge badge-hot">disabled</p>
+      <p class="dim small">Set <code>SIGNAL_API_KEY</code> (Railway → Variables or local <code>.env</code>) to
+      a strong secret, then share it with your intent vendor. The endpoint stays closed until it's set.</p>
+    {% endif %}
+  </section>
+</div>
+
+{% endblock %}

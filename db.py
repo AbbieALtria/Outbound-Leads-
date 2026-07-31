@@ -269,6 +269,13 @@ LEAD_EXTRA_COLUMNS = {
     # How many distinct locations this business was found at in its pull sweep
     # (>=2 => multi-site; powers the ICT multi_location signal). 1 = single-location.
     "location_count": "INTEGER NOT NULL DEFAULT 1",
+    # B2B intent signals matched onto a lead from an external source (site-visitor
+    # trackers like Leadfeeder/Albacross; intent tools like Bombora/G2).
+    "site_visitor": "INTEGER NOT NULL DEFAULT 0",
+    "site_visit_count": "INTEGER",
+    "site_last_visit_date": "TEXT",
+    "intent_topic": "TEXT NOT NULL DEFAULT ''",
+    "intent_last_seen_date": "TEXT",
     # Market + provenance. B2B leads are pulled from Maps; B2C leads arrive via
     # the intake API / CSV import and MUST carry consent for compliant calling.
     "market_type": "TEXT NOT NULL DEFAULT 'b2b'",       # b2b | b2c
@@ -400,6 +407,20 @@ CREATE TABLE IF NOT EXISTS suppressed_leads (
     reason TEXT NOT NULL DEFAULT '',
     cooldown_until TEXT NOT NULL,
     added_at TEXT NOT NULL
+);
+
+-- B2B intent signals (site-visitor / research-intent) that couldn't be matched
+-- to an existing lead — kept for review / backfill, never silently dropped.
+CREATE TABLE IF NOT EXISTS unmatched_signals (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,                       -- site_visitor | intent
+    company_name TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT '',
+    signal_strength TEXT NOT NULL DEFAULT '',
+    last_seen_date TEXT NOT NULL DEFAULT '',
+    topic TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
 );
 
 -- In-app alerts (e.g. a new regenerated list is ready to upload to VICIdial).

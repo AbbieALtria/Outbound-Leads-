@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Unmatched Signals — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="toolbar">
+  <div class="pull-controls">
+    <strong>Unmatched intent signals</strong>
+    <span class="dim small">Signals we couldn't match to a lead (no phone from these sources). Kept for review — click re-match after a later Maps pull may have added that company.</span>
+    <form method="post" action="{{ url_for('signals_rematch') }}" style="margin-left:auto;">
+      <button type="submit" class="primary">Re-match against current leads</button>
+    </form>
+  </div>
+  {% if request.args.get('matched') %}
+  <p class="pull-result ok" style="margin-top:6px;">Re-matched {{ request.args.get('matched') }} signal(s) onto leads.</p>
+  {% endif %}
+  <a class="dim small" href="{{ url_for('import_signals') }}" style="display:inline-block;margin-top:6px;">← Import signals</a>
+</section>
+
+{% if rows %}
+<div class="table-wrap">
+<table class="leads">
+  <thead>
+    <tr><th>#</th><th>Kind</th><th>Company</th><th>Domain</th><th>Strength</th><th>Last seen</th><th>Topic</th><th>Source</th><th>Recorded</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="dim">{{ loop.index }}</td>
+      <td class="nowrap">{{ r['kind'] }}</td>
+      <td><strong>{{ r['company_name'] }}</strong></td>
+      <td class="nowrap">{{ r['domain'] or '—' }}</td>
+      <td>{{ r['signal_strength'] or '—' }}</td>
+      <td class="nowrap">{{ r['last_seen_date'] or '—' }}</td>
+      <td class="small">{{ r['topic'] or '—' }}</td>
+      <td class="nowrap small">{{ r['source'] }}</td>
+      <td class="nowrap dim small">{{ r['created_at'][:16].replace('T',' ') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="dim small">Showing {{ rows|length }} of {{ total }}.</p>
+{% else %}
+<p class="empty">No unmatched signals. Everything imported matched an existing lead.</p>
+{% endif %}
+
+{% endblock %}

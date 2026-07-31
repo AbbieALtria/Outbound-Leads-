@@ -23,6 +23,7 @@ import contacts
 import db
 import dialer_import
 import dnc
+import intent_signals
 import geo_data
 import leads_intake
 import ops_dispositions
@@ -59,7 +60,7 @@ _seed_conn.close()
 _pull_lock = threading.Lock()
 
 # Paths reachable without a login.
-_PUBLIC_ENDPOINTS = {"login", "logout", "static", "api_intake"}
+_PUBLIC_ENDPOINTS = {"login", "logout", "static", "api_intake", "api_signal"}
 
 
 @app.before_request
@@ -1217,6 +1218,91 @@ def import_leads():
                 error = str(e)
     return render_template("import_leads.html", summary=summary, error=error,
                            intake_enabled=bool(os.environ.get("INTAKE_API_KEY")))
+
+
+# ------------------------------------------------ B2B intent signals (company-level)
+
+@app.route("/api/signal", methods=["POST"])
+def api_signal():
+    """Webhook for a B2B intent signal (site-visitor or research-intent), matched
+    onto an existing lead by domain/company name. Auth: header 'X-Signal-Key' must
+    equal SIGNAL_API_KEY. Public (like api_intake). No lead is auto-created — an
+    unmatched signal is stored for review/backfill."""
+    expected = os.environ.get("SIGNAL_API_KEY", "")
+    if not expected:
+        return jsonify({"error": "Signals not enabled (SIGNAL_API_KEY unset)"}), 503
+    if request.headers.get("X-Signal-Key", "") != expected:
+        return jsonify({"error": "Invalid signal key"}), 401
+    data = request.get_json(silent=True) or {}
+    kind = (data.get("kind") or ("intent" if data.get("topic") else "site_visitor")).strip()
+    if kind not in intent_signals.KINDS:
+        return jsonify({"error": f"kind must be one of {intent_signals.KINDS}"}), 400
+    payload = {
+        "company_name": data.get("company_name") or data.get("company") or "",
+        "domain": data.get("domain") or data.get("website") or "",
+        "signal_strength": data.get("signal_strength") or data.get("visits")
+                           or data.get("intent_score") or "",
+        "last_seen_date": data.get("last_seen_date") or data.get("last_seen") or "",
+        "topic": data.get("topic") or "",
+    }
+    conn = get_db()
+    affected = []
+    result = intent_signals.apply_one(
+        conn, kind, payload, intent_signals.build_index(conn),
+        "api:" + (data.get("source") or "vendor"), affected)
+    conn.commit()
+    scoring.rescore_leads(conn, affected)
+    return jsonify({"ok": result != "invalid", "result": result}), (
+        400 if result == "invalid" else 200)
+
+
+@app.route("/import/signals", methods=["GET", "POST"])
+def import_signals():
+    """Upload a CSV of B2B intent signals (site-visitor or intent)."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    summary = error = None
+    if request.method == "POST":
+        kind = request.form.get("kind", "site_visitor")
+        f = request.files.get("file")
+        if not f or not f.filename:
+            error = "Choose a CSV file first."
+        elif kind not in intent_signals.KINDS:
+            error = "Pick a signal type."
+        else:
+            try:
+                text = f.read().decode("utf-8-sig", errors="replace")
+                summary = intent_signals.import_csv(get_db(), text, kind, f"csv:{f.filename}")
+                summary["filename"] = f.filename
+                summary["kind"] = kind
+            except ValueError as e:
+                error = str(e)
+    conn = get_db()
+    return render_template("import_signals.html", summary=summary, error=error,
+                           kinds=intent_signals.KINDS,
+                           unmatched=intent_signals.unmatched_count(conn),
+                           signal_enabled=bool(os.environ.get("SIGNAL_API_KEY")))
+
+
+@app.route("/signals/unmatched")
+def signals_unmatched():
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    return render_template("signals_unmatched.html",
+                           rows=intent_signals.unmatched_list(conn),
+                           total=intent_signals.unmatched_count(conn))
+
+
+@app.route("/signals/rematch", methods=["POST"])
+def signals_rematch():
+    guard = _require_admin()
+    if guard:
+        return guard
+    n = intent_signals.rematch_unmatched(get_db())
+    return redirect(url_for("signals_unmatched", matched=n))
 
 
 # ---------------------------------------------------------------- call log import

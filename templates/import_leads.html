@@ -59,6 +59,9 @@
       The endpoint stays closed until it's set.</p>
     {% endif %}
     <p class="dim small">⚠️ Every B2C lead must carry documented consent before dialing — run your DNC/TCPA scrub too.</p>
+    {% if current_user and current_user['role'] == 'admin' %}
+    <p class="dim small" style="margin-top:8px;">Have <strong>B2B intent data</strong> (site-visitor or buyer-intent)? <a href="{{ url_for('import_signals') }}">Import intent signals →</a></p>
+    {% endif %}
   </section>
 </div>
 
