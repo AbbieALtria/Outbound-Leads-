@@ -4,3 +4,4 @@ gunicorn>=21.2
 PyMySQL>=1.1
 APScheduler>=3.10
 tzdata>=2024.1
+anthropic>=0.69

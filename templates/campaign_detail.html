@@ -14,7 +14,16 @@
   </p>
   <p>
     <a class="button primary" href="{{ url_for('dashboard', campaign_id=campaign['id']) }}">Go to dashboard &amp; pull →</a>
+    {% if current_user and current_user['role'] == 'admin' %}
+    <form method="post" action="{{ url_for('campaign_suggest_industries', campaign_id=campaign['id']) }}" style="display:inline;">
+      <button type="submit" class="button"
+              title="Ask Claude for related verticals to target for this campaign — you review and approve each one before it's added">✨ Suggest related industries</button>
+    </form>
+    {% endif %}
   </p>
+  {% if request.args.get('added') %}
+  <p class="pull-result ok">Added {{ request.args.get('added') }} industry(ies) to the catalog.</p>
+  {% endif %}
 </section>
 
 <section class="card">

@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 
+import ai_industries
 import compliance
 import contacts
 import db
@@ -416,6 +417,57 @@ def campaigns_create():
     )
     conn.commit()
     return redirect(url_for("campaigns_page"))
+
+
+@app.route("/campaigns/<int:campaign_id>/suggest_industries", methods=["POST"])
+def campaign_suggest_industries(campaign_id):
+    """Ask Claude for related industries for this campaign. Suggestions are shown
+    for REVIEW only — nothing is added until a human approves below."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    camp = conn.execute(
+        "SELECT cp.*, cl.name AS client_name FROM campaigns cp "
+        "LEFT JOIN clients cl ON cl.id = cp.client_id WHERE cp.id = ?", (campaign_id,)
+    ).fetchone()
+    if not camp:
+        return redirect(url_for("campaigns_page", error="Campaign not found."))
+    offer = db.offer_for_campaign(conn, camp)
+    existing = [r["label"] for r in conn.execute("SELECT label FROM industries")]
+    suggestions, error = [], None
+    if not ai_industries.enabled():
+        error = ("AI suggestions are off — set ANTHROPIC_API_KEY in Railway → "
+                 "Variables to enable them.")
+    else:
+        try:
+            suggestions = ai_industries.suggest(
+                camp["name"], offer["name"] if offer else "",
+                existing, country=camp["country"] or "")
+        except Exception as e:
+            error = f"Couldn't get suggestions: {e}"
+    return render_template("campaign_suggestions.html", campaign=camp,
+                           suggestions=suggestions, error=error)
+
+
+@app.route("/campaigns/<int:campaign_id>/approve_industries", methods=["POST"])
+def campaign_approve_industries(campaign_id):
+    """Add the checked (and possibly edited) suggestions via the SAME path as a
+    manually added industry."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    added = 0
+    for idx in request.form.getlist("approve"):
+        label = request.form.get(f"label_{idx}", "")
+        query = request.form.get(f"query_{idx}", "")
+        chains = [c.strip() for c in request.form.get(f"chains_{idx}", "").split(",")
+                  if c.strip()]
+        if create_industry(conn, label, query, chains):
+            added += 1
+    conn.commit()
+    return redirect(url_for("campaign_detail", campaign_id=campaign_id, added=added))
 
 
 @app.route("/campaigns/<int:campaign_id>/edit", methods=["POST"])
@@ -1701,20 +1753,38 @@ def delete_city(city_id):
     return redirect(url_for("settings"))
 
 
+def create_industry(conn, label, query="", chains=None, slug=None):
+    """Add one industry to the catalog (+ its chain exclusions). The single path
+    used by BOTH the manual '+ add industry' form and AI-suggested approvals.
+    Returns the slug, or '' when the label is empty."""
+    label = (label or "").strip()
+    if not label:
+        return ""
+    slug = (slug or re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")) or "industry"
+    query = (query or "").strip()
+    if "{city}" not in query:
+        # Sensible default search phrase for a custom industry.
+        query = f"{label.lower()} in {{city}}"
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO industries (slug, label, query_template) VALUES (?, ?, ?)",
+        (slug, label, query),
+    )
+    if cur.rowcount and chains:      # newly added -> seed its chain exclusions
+        for chain in chains:
+            chain = str(chain).strip()
+            if chain:
+                conn.execute(
+                    "INSERT OR IGNORE INTO chains (industry_id, name) VALUES (?, ?)",
+                    (cur.lastrowid, chain))
+    return slug
+
+
 @app.route("/settings/industries/add", methods=["POST"])
 def add_industry():
     label = request.form.get("label", "").strip()
     if label:
-        slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "industry"
-        query = request.form.get("query", "").strip()
-        if "{city}" not in query:
-            # Sensible default search phrase for a custom industry.
-            query = f"{label.lower()} in {{city}}"
         conn = get_db()
-        conn.execute(
-            "INSERT OR IGNORE INTO industries (slug, label, query_template) VALUES (?, ?, ?)",
-            (slug, label, query),
-        )
+        slug = create_industry(conn, label, request.form.get("query", ""))
         if request.form.get("next") == "dashboard":
             # quick-add from the dashboard: preselect it for the next pull
             db.set_setting(conn, "default_industry", slug)

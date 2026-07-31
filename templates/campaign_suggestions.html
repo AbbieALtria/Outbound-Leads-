@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Suggested industries — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card wide">
+  <h2>Suggested industries for {{ campaign['name'] }}</h2>
+  <p class="dim small">AI suggestions for related verticals — <strong>nothing has been added yet</strong>.
+  Tick the ones you want, edit the search phrase or chain-exclusions if needed, then approve. Approved
+  industries go into the catalog through the same path as a manually added one, so you can test an
+  unproven query on a small pull before spending real credits on it.</p>
+  {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
+
+  {% if suggestions %}
+  <form method="post" action="{{ url_for('campaign_approve_industries', campaign_id=campaign['id']) }}">
+    <div class="table-wrap">
+    <table class="leads">
+      <thead>
+        <tr><th>Add?</th><th>Industry</th><th>Search phrase</th><th>Chains to exclude</th><th>Why</th></tr>
+      </thead>
+      <tbody>
+        {% for s in suggestions %}
+        <tr>
+          <td><input type="checkbox" name="approve" value="{{ loop.index0 }}"></td>
+          <td>
+            <input type="text" name="label_{{ loop.index0 }}" value="{{ s['label'] }}" size="20">
+          </td>
+          <td>
+            <input type="text" name="query_{{ loop.index0 }}" value="{{ s['query'] }}" size="34"
+                   title="Must contain {city} — it's replaced with each city you pull">
+          </td>
+          <td>
+            <input type="text" name="chains_{{ loop.index0 }}" value="{{ s['chains']|join(', ') }}"
+                   size="30" placeholder="comma-separated (optional)">
+          </td>
+          <td class="dim small">{{ s['why'] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p style="margin-top:10px;">
+      <button type="submit" class="primary">Add checked industries</button>
+      <a class="button" href="{{ url_for('campaign_detail', campaign_id=campaign['id']) }}">Cancel</a>
+    </p>
+  </form>
+  {% elif not error %}
+  <p class="empty">No new suggestions — your catalog may already cover this campaign's verticals.</p>
+  <p><a class="button" href="{{ url_for('campaign_detail', campaign_id=campaign['id']) }}">← Back to campaign</a></p>
+  {% else %}
+  <p><a class="button" href="{{ url_for('campaign_detail', campaign_id=campaign['id']) }}">← Back to campaign</a></p>
+  {% endif %}
+</section>
+
+{% endblock %}

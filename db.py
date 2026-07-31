@@ -118,7 +118,7 @@ DEFAULT_QUERY_TEMPLATE = "{industry} in {city}"
 # Bump this when SEED_INDUSTRIES gains new entries; init_db() then tops up an
 # existing database once (INSERT OR IGNORE), preserving the user's own edits and
 # not resurrecting industries they deleted after the previous version.
-INDUSTRY_CATALOG_VERSION = 3
+INDUSTRY_CATALOG_VERSION = 4
 
 # Each industry carries its own search phrase (a natural Google Maps query) so
 # the pull isn't locked to "... contractor in {city}". Users can edit the phrase
@@ -226,6 +226,16 @@ SEED_INDUSTRIES = {
     "medical_clinic": {"label": "Medical Clinic", "query": "medical clinic in {city}", "chains": []},
     "physiotherapy": {"label": "Physiotherapy Clinic", "query": "physiotherapy clinic in {city}", "chains": []},
     "consulting_firm": {"label": "Consulting Firm", "query": "consulting firm in {city}", "chains": []},
+    "pharmacy": {"label": "Pharmacy", "query": "pharmacy in {city}", "chains": [
+        "Shoppers Drug Mart", "Rexall", "London Drugs", "Jean Coutu", "Pharmasave",
+        "CVS", "Walgreens", "Rite Aid"]},
+    "optometrist": {"label": "Optometrist", "query": "optometrist in {city}", "chains": [
+        "LensCrafters", "Pearle Vision", "Specsavers", "Hakim Optical", "FYidoctors",
+        "Visionworks", "America's Best"]},
+    "urgent_care": {"label": "Urgent Care Clinic", "query": "urgent care clinic in {city}", "chains": [
+        "MedExpress", "CityMD", "NextCare", "AFC Urgent Care", "Concentra"]},
+    # Eye-movement / binocular-vision specialty — distinct from general optometry.
+    "orthoptics": {"label": "Orthoptics Clinic", "query": "orthoptist in {city}", "chains": []},
     "car_dealership": {"label": "Car Dealership", "query": "car dealership in {city}", "chains": []},
     "furniture_store": {"label": "Furniture Store", "query": "furniture store in {city}", "chains": [
         "IKEA", "Ashley", "Leon's", "The Brick"]},
