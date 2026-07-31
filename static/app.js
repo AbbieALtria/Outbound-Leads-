@@ -75,6 +75,89 @@ function currentCity() {
   fillStates();
 })();
 
+// ---- multi-city sweep picker: Province checklist -> City checklist ----
+// Same data + cascade pattern as the single-city dropdown above; no free text.
+(function initSweep() {
+  const country = document.getElementById("pull-country");
+  const provWrap = document.getElementById("sweep-provinces");
+  const cityWrap = document.getElementById("sweep-cities");
+  const addCity = document.getElementById("sweep-add-city");
+  const addProv = document.getElementById("sweep-add-prov");
+  const addBtn = document.getElementById("sweep-add-btn");
+  const cityEl = document.getElementById("pull-city");
+  if (!country || !provWrap || !cityWrap || !cityEl) return;
+  const parse = (el, attr) => { try { return JSON.parse(el.dataset[attr] || "{}"); } catch { return {}; } };
+  const statesByCountry = parse(country, "states");
+  const citiesByState = parse(cityEl, "cities");
+  const knownByState = parse(cityEl, "known");
+  const custom = {};                       // {province: [added cities]}
+  const selected = new Set();              // keys "province\tcity" — survives rebuilds
+  const key = (p, c) => p + "\t" + c;
+
+  const checkedProvinces = () =>
+    [...provWrap.querySelectorAll("input:checked")].map((i) => i.value);
+
+  const cityChk = (p, c) => {
+    const lbl = document.createElement("label"); lbl.className = "chk";
+    const inp = document.createElement("input"); inp.type = "checkbox";
+    inp.dataset.prov = p; inp.dataset.city = c;
+    inp.checked = selected.has(key(p, c));
+    inp.addEventListener("change", () =>
+      inp.checked ? selected.add(key(p, c)) : selected.delete(key(p, c)));
+    lbl.appendChild(inp);
+    lbl.appendChild(document.createTextNode(" " + c));
+    return lbl;
+  };
+
+  const fillCities = () => {
+    const provs = checkedProvinces();
+    // drop any selection whose province is no longer checked
+    [...selected].forEach((k) => { if (!provs.includes(k.split("\t")[0])) selected.delete(k); });
+    cityWrap.innerHTML = "";
+    if (!provs.length) {
+      cityWrap.innerHTML = '<span class="dim small">Check a province to list its cities.</span>';
+      return;
+    }
+    provs.forEach((p) => {
+      const cities = [...new Set([
+        ...(citiesByState[p] || []), ...(knownByState[p] || []), ...(custom[p] || []),
+      ])].sort((a, b) => a.localeCompare(b));
+      cities.forEach((c) => cityWrap.appendChild(cityChk(p, c)));
+    });
+  };
+
+  const fillProvinces = () => {
+    const list = statesByCountry[country.value] || [];
+    provWrap.innerHTML = ""; addProv.innerHTML = "";
+    selected.clear();
+    list.forEach((s) => {
+      const lbl = document.createElement("label"); lbl.className = "chk";
+      const inp = document.createElement("input"); inp.type = "checkbox"; inp.value = s;
+      inp.addEventListener("change", fillCities);
+      lbl.appendChild(inp); lbl.appendChild(document.createTextNode(" " + s));
+      provWrap.appendChild(lbl);
+      const o = document.createElement("option"); o.value = s; o.textContent = s;
+      addProv.appendChild(o);
+    });
+    if (!list.length) provWrap.innerHTML = '<span class="dim small">No provinces for this country.</span>';
+    fillCities();
+  };
+
+  if (addBtn) addBtn.addEventListener("click", () => {
+    const c = (addCity.value || "").trim(); const p = addProv.value;
+    if (!c || !p) return;
+    (custom[p] = custom[p] || []).push(c);
+    const provCb = [...provWrap.querySelectorAll("input")].find((i) => i.value === p);
+    if (provCb && !provCb.checked) provCb.checked = true;
+    selected.add(key(p, c));
+    addCity.value = "";
+    fillCities();
+  });
+
+  country.addEventListener("change", fillProvinces);
+  fillProvinces();
+})();
+
 // ---- status buttons ----
 document.querySelectorAll("tr[data-lead-id]").forEach((row) => {
   const leadId = row.dataset.leadId;
@@ -192,15 +275,13 @@ if (pullBtn) {
     });
   }
 
-  // Parse the "Multiple locations" box: one "City, State[, Country]" per line.
+  // Multi-city sweep: the checked city checkboxes (each carries its province).
+  // Same {city, state, country} shape the backend already expects.
   const parseLocations = () => {
-    const box = document.getElementById("pull-locations");
-    if (!box || !box.value.trim()) return [];
-    return box.value.split("\n").map((line) => {
-      const parts = line.split(",").map((p) => p.trim());
-      if (!parts[0]) return null;
-      return { city: parts[0] || "", state: parts[1] || "", country: parts[2] || "" };
-    }).filter(Boolean);
+    const country = (document.getElementById("pull-country") || {}).value || "";
+    return [...document.querySelectorAll("#sweep-cities input:checked")].map((cb) => ({
+      city: cb.dataset.city, state: cb.dataset.prov, country,
+    }));
   };
 
   pullBtn.addEventListener("click", async () => {

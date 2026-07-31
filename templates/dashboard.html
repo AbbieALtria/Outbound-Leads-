@@ -79,10 +79,21 @@
     {% endif %}
   </div>
   <div class="pull-controls" style="margin-top:8px; align-items:flex-start;">
-    <label class="dim small" for="pull-locations" style="padding-top:6px;">Multiple locations<br><span class="dim">(optional)</span></label>
-    <textarea id="pull-locations" rows="2" style="flex:1; min-width:280px; max-width:520px; font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px;"
-      placeholder="One per line — City, Province/State"></textarea>
-    <span class="dim small" style="padding-top:6px;">Sweeps several cities in a single pull instead of just the one selected above. Any business found in more than one of your listed cities is automatically flagged as multi-location — which scores higher for offers that reward it. The pull stops once your lead target is reached, combined across all cities.</span>
+    <label class="dim small" style="padding-top:6px;">Multiple locations<br><span class="dim">(optional)</span></label>
+    <div>
+      <div class="dim small">Provinces / states</div>
+      <div id="sweep-provinces" class="ind-checks" style="max-width:220px;"></div>
+    </div>
+    <div>
+      <div class="dim small">Cities <span class="dim">— check to add to the sweep</span></div>
+      <div id="sweep-cities" class="ind-checks" style="max-width:340px;"></div>
+      <div class="inline-form" style="margin-top:4px; gap:4px;">
+        <input id="sweep-add-city" type="text" placeholder="＋ add city not listed" style="width:150px;" autocomplete="off">
+        <select id="sweep-add-prov" class="geo" style="width:130px;" title="Province for the added city"></select>
+        <button id="sweep-add-btn" type="button" class="button">Add</button>
+      </div>
+    </div>
+    <span class="dim small" style="flex-basis:100%;">Sweeps every city checked above in a single pull. Any business found in more than one is automatically flagged as multi-location — which scores higher for offers that reward it. The pull stops once your lead target is reached, combined across all cities.</span>
   </div>
   <div id="pull-progress" class="pull-progress" hidden>
     <span class="spinner"></span>
