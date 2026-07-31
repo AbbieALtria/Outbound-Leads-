@@ -17,7 +17,7 @@ the DB, or the UI), same pattern as OUTSCRAPER_API_KEY / APOLLO_API_KEY.
 import os
 import re
 
-MODEL = "claude-opus-5"
+MODEL = "claude-sonnet-5"
 
 # Shape we ask Claude to return. Structured outputs guarantee it parses.
 SUGGESTION_SCHEMA = {
