@@ -75,87 +75,107 @@ function currentCity() {
   fillStates();
 })();
 
-// ---- multi-city sweep picker: Province checklist -> City checklist ----
-// Same data + cascade pattern as the single-city dropdown above; no free text.
+// ---- multi-city sweep picker: nested Province -> City tree ----
+// One tree, not two panels: each province owns the cities indented beneath it, so
+// which city belongs to which province is never ambiguous. Checking a province
+// selects all its cities; individual cities can then be unticked.
 (function initSweep() {
   const country = document.getElementById("pull-country");
-  const provWrap = document.getElementById("sweep-provinces");
-  const cityWrap = document.getElementById("sweep-cities");
+  const tree = document.getElementById("sweep-tree");
   const addCity = document.getElementById("sweep-add-city");
   const addProv = document.getElementById("sweep-add-prov");
   const addBtn = document.getElementById("sweep-add-btn");
   const cityEl = document.getElementById("pull-city");
-  if (!country || !provWrap || !cityWrap || !cityEl) return;
+  if (!country || !tree || !cityEl) return;
   const parse = (el, attr) => { try { return JSON.parse(el.dataset[attr] || "{}"); } catch { return {}; } };
   const statesByCountry = parse(country, "states");
   const citiesByState = parse(cityEl, "cities");
   const knownByState = parse(cityEl, "known");
-  const custom = {};                       // {province: [added cities]}
-  const selected = new Set();              // keys "province\tcity" — survives rebuilds
-  const key = (p, c) => p + "\t" + c;
+  const custom = {};                       // {province: [manually added cities]}
 
-  const checkedProvinces = () =>
-    [...provWrap.querySelectorAll("input:checked")].map((i) => i.value);
+  const citiesFor = (p) => [...new Set([
+    ...(citiesByState[p] || []), ...(knownByState[p] || []), ...(custom[p] || []),
+  ])].sort((a, b) => a.localeCompare(b));
 
-  const cityChk = (p, c) => {
-    const lbl = document.createElement("label"); lbl.className = "chk";
-    const inp = document.createElement("input"); inp.type = "checkbox";
-    inp.dataset.prov = p; inp.dataset.city = c;
-    inp.checked = selected.has(key(p, c));
-    inp.addEventListener("change", () =>
-      inp.checked ? selected.add(key(p, c)) : selected.delete(key(p, c)));
-    lbl.appendChild(inp);
-    lbl.appendChild(document.createTextNode(" " + c));
-    return lbl;
+  const syncProvince = (provBox, cityBoxes) => {
+    const on = cityBoxes.filter((c) => c.checked).length;
+    provBox.checked = on > 0 && on === cityBoxes.length;
+    provBox.indeterminate = on > 0 && on < cityBoxes.length;
   };
 
-  const fillCities = () => {
-    const provs = checkedProvinces();
-    // drop any selection whose province is no longer checked
-    [...selected].forEach((k) => { if (!provs.includes(k.split("\t")[0])) selected.delete(k); });
-    cityWrap.innerHTML = "";
-    if (!provs.length) {
-      cityWrap.innerHTML = '<span class="dim small">Check a province to list its cities.</span>';
+  const render = () => {
+    const provinces = statesByCountry[country.value] || [];
+    tree.innerHTML = "";
+    addProv.innerHTML = "";
+    if (!provinces.length) {
+      tree.innerHTML = '<span class="dim small">No provinces/states listed for this country — use “add a city not listed”.</span>';
       return;
     }
-    provs.forEach((p) => {
-      const cities = [...new Set([
-        ...(citiesByState[p] || []), ...(knownByState[p] || []), ...(custom[p] || []),
-      ])].sort((a, b) => a.localeCompare(b));
-      cities.forEach((c) => cityWrap.appendChild(cityChk(p, c)));
-    });
-  };
+    provinces.forEach((p) => {
+      const node = document.createElement("div");
+      node.className = "sweep-prov";
 
-  const fillProvinces = () => {
-    const list = statesByCountry[country.value] || [];
-    provWrap.innerHTML = ""; addProv.innerHTML = "";
-    selected.clear();
-    list.forEach((s) => {
-      const lbl = document.createElement("label"); lbl.className = "chk";
-      const inp = document.createElement("input"); inp.type = "checkbox"; inp.value = s;
-      inp.addEventListener("change", fillCities);
-      lbl.appendChild(inp); lbl.appendChild(document.createTextNode(" " + s));
-      provWrap.appendChild(lbl);
-      const o = document.createElement("option"); o.value = s; o.textContent = s;
-      addProv.appendChild(o);
+      const head = document.createElement("label");
+      head.className = "chk sweep-prov-head";
+      const provBox = document.createElement("input");
+      provBox.type = "checkbox";
+      provBox.dataset.province = p;
+      head.appendChild(provBox);
+      head.appendChild(document.createTextNode(" " + p));
+      node.appendChild(head);
+
+      const kids = document.createElement("div");
+      kids.className = "sweep-cities";
+      const cityBoxes = citiesFor(p).map((c) => {
+        const lbl = document.createElement("label");
+        lbl.className = "chk";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "sweep-city";
+        box.dataset.prov = p;
+        box.dataset.city = c;
+        box.addEventListener("change", () => syncProvince(provBox, cityBoxes));
+        lbl.appendChild(box);
+        lbl.appendChild(document.createTextNode(" " + c));
+        kids.appendChild(lbl);
+        return box;
+      });
+      if (!cityBoxes.length) {
+        kids.innerHTML = '<span class="dim small">no cities listed — add one below</span>';
+      }
+      node.appendChild(kids);
+
+      // Province toggles every city under it.
+      provBox.addEventListener("change", () => {
+        cityBoxes.forEach((b) => { b.checked = provBox.checked; });
+        provBox.indeterminate = false;
+      });
+
+      tree.appendChild(node);
+      const opt = document.createElement("option");
+      opt.value = p; opt.textContent = p;
+      addProv.appendChild(opt);
     });
-    if (!list.length) provWrap.innerHTML = '<span class="dim small">No provinces for this country.</span>';
-    fillCities();
   };
 
   if (addBtn) addBtn.addEventListener("click", () => {
-    const c = (addCity.value || "").trim(); const p = addProv.value;
+    const c = (addCity.value || "").trim(), p = addProv.value;
     if (!c || !p) return;
     (custom[p] = custom[p] || []).push(c);
-    const provCb = [...provWrap.querySelectorAll("input")].find((i) => i.value === p);
-    if (provCb && !provCb.checked) provCb.checked = true;
-    selected.add(key(p, c));
     addCity.value = "";
-    fillCities();
+    render();
+    // check the province's new city so the addition is visibly in the sweep
+    const box = [...tree.querySelectorAll(".sweep-city")]
+      .find((b) => b.dataset.prov === p && b.dataset.city === c);
+    if (box) {
+      box.checked = true;
+      box.dispatchEvent(new Event("change"));
+      box.scrollIntoView({ block: "nearest" });
+    }
   });
 
-  country.addEventListener("change", fillProvinces);
-  fillProvinces();
+  country.addEventListener("change", render);
+  render();
 })();
 
 // ---- status buttons ----
@@ -279,7 +299,7 @@ if (pullBtn) {
   // Same {city, state, country} shape the backend already expects.
   const parseLocations = () => {
     const country = (document.getElementById("pull-country") || {}).value || "";
-    return [...document.querySelectorAll("#sweep-cities input:checked")].map((cb) => ({
+    return [...document.querySelectorAll("#sweep-tree .sweep-city:checked")].map((cb) => ({
       city: cb.dataset.city, state: cb.dataset.prov, country,
     }));
   };
@@ -354,6 +374,31 @@ document.addEventListener("click", (e) => {
   btn.textContent = reveal ? "🙈" : "👁";
   btn.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
 });
+
+// ---- discard pull (destructive: confirm via modal, never a native confirm) ----
+const discardBtn = document.getElementById("discard-btn");
+if (discardBtn && !discardBtn.disabled) {
+  const dModal = document.getElementById("discard-modal");
+  const closeD = () => { if (dModal) dModal.hidden = true; };
+
+  discardBtn.addEventListener("click", () => {
+    const n = discardBtn.dataset.count || "0";
+    document.getElementById("discard-modal-scope").innerHTML =
+      `You're about to permanently delete <strong>${n}</strong> lead${n === "1" ? "" : "s"} from this pull.`;
+    dModal.hidden = false;
+  });
+  document.getElementById("discard-cancel")?.addEventListener("click", closeD);
+  dModal?.addEventListener("click", (e) => { if (e.target === dModal) closeD(); });
+
+  document.getElementById("discard-confirm")?.addEventListener("click", () => {
+    // POST via a real form so the server redirect lands normally.
+    const f = document.createElement("form");
+    f.method = "post";
+    f.action = `/pull_runs/${discardBtn.dataset.run_id}/discard`;
+    document.body.appendChild(f);
+    f.submit();
+  });
+}
 
 // ---- verify phones button ----
 const verifyBtn = document.getElementById("verify-btn");

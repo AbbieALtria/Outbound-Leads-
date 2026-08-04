@@ -83,6 +83,19 @@ details.add-user { margin-top: 12px; }
 details.add-user > summary { list-style: none; }
 details.add-user > summary::-webkit-details-marker { display: none; }
 
+/* ---- nested province -> city sweep tree ---- */
+.sweep-tree {
+  border: 1px solid var(--border); border-radius: 6px; background: #fff;
+  padding: 6px 8px; max-height: 220px; overflow-y: auto; margin-top: 4px;
+}
+.sweep-prov + .sweep-prov { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+.sweep-prov-head { font-weight: 600; }
+.sweep-cities {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  margin: 2px 0 4px 20px; padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+
 /* ---- modal ---- */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(16, 24, 39, 0.55);

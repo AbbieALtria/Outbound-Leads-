@@ -65,6 +65,11 @@
     <button id="pull-btn" class="primary" data-campaign="{{ selected_campaign['id'] if selected_campaign }}" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
     <button id="stop-btn" class="danger" hidden>Stop</button>
     <button id="clear-btn" class="button" type="button" title="Clear progress and reset the view">Clear</button>
+    {% if batch %}
+    <button id="discard-btn" type="button" class="danger" {{ 'disabled' if not can_discard }}
+            data-run_id="{{ batch['id'] }}" data-count="{{ leads|length }}"
+            title="{{ discard_reason if not can_discard else 'Permanently delete this pull’s leads (the run stays in Activity, marked discarded)' }}">Discard this pull</button>
+    {% endif %}
 
     {% set is_b2c = active_campaign and active_campaign['audience'] == 'b2c' %}
     <form method="post" action="{{ url_for('add_industry') }}" class="add-industry-form"
@@ -90,19 +95,25 @@
     {% if request.args.get('added') %}
       <span class="pull-result ok" style="margin:0;">Added {{ request.args.get('added') }} industry(ies) — now in the picker.</span>
     {% endif %}
+    {% if request.args.get('discarded') %}
+      <span class="pull-result ok" style="margin:0;">Pull discarded — its leads were deleted (the run is kept in Activity).</span>
+    {% endif %}
+    {% if request.args.get('error') %}
+      <span class="pull-result err" style="margin:0;">{{ request.args.get('error') }}</span>
+    {% endif %}
   </div>
   <div class="pull-controls" style="margin-top:8px; align-items:flex-start;">
     <label class="dim small" style="padding-top:6px;">Multiple locations<br><span class="dim">(optional)</span></label>
-    <div>
-      <div class="dim small">Provinces / states</div>
-      <div id="sweep-provinces" class="ind-checks" style="max-width:220px;"></div>
-    </div>
-    <div>
-      <div class="dim small">Cities <span class="dim">— check to add to the sweep</span></div>
-      <div id="sweep-cities" class="ind-checks" style="max-width:340px;"></div>
-      <div class="inline-form" style="margin-top:4px; gap:4px;">
-        <input id="sweep-add-city" type="text" placeholder="＋ add city not listed" style="width:150px;" autocomplete="off">
-        <select id="sweep-add-prov" class="geo" style="width:130px;" title="Province for the added city"></select>
+    <div style="flex:1; min-width:320px; max-width:560px;">
+      <div class="dim small">Check a province to select all its cities, then untick any you don't want.</div>
+      {# One nested tree: each province owns the cities indented beneath it, so it's
+         always unambiguous which city belongs to which province. #}
+      <div id="sweep-tree" class="sweep-tree"></div>
+      <div class="inline-form" style="margin-top:6px; gap:4px;">
+        <span class="dim small">＋ Add a city not listed:</span>
+        <input id="sweep-add-city" type="text" placeholder="city name" style="width:150px;" autocomplete="off">
+        <span class="dim small">under</span>
+        <select id="sweep-add-prov" class="geo" style="width:150px;" title="Province this city belongs to"></select>
         <button id="sweep-add-btn" type="button" class="button">Add</button>
       </div>
     </div>
@@ -167,6 +178,25 @@
 {% with show_appointment = active_campaign and active_campaign['goal'] == 'appointment', select_leads = true %}
   {% include "_lead_table.html" %}
 {% endwith %}
+
+{# Confirmation modal for discarding a pull — deletes leads, so it must be explicit. #}
+<div id="discard-modal" class="modal-backdrop" hidden>
+  <div class="modal-card">
+    <h3 style="margin-top:0;">⚠️ Discard this pull — this permanently deletes leads</h3>
+    <p id="discard-modal-scope"></p>
+    <ul class="small" style="line-height:1.6;">
+      <li>These leads are <strong>deleted from the database</strong>. This cannot be undone.</li>
+      <li>The pull itself stays in <a href="{{ url_for('activity_page') }}">Activity</a>, marked <strong>discarded</strong>, so you keep the audit trail of what was generated and dropped.</li>
+      <li>Their phone numbers become pullable again — a future pull may return the same businesses.</li>
+      <li>Anything already on your DNC list stays suppressed; discarding doesn't touch DNC.</li>
+    </ul>
+    <p class="dim small">Only use this for a bad batch you don't want to keep. To just reset the view, use <strong>Clear</strong> instead.</p>
+    <p style="text-align:right;margin-bottom:0;">
+      <button type="button" class="button" id="discard-cancel">Cancel</button>
+      <button type="button" class="danger" id="discard-confirm">Yes, delete these leads</button>
+    </p>
+  </div>
+</div>
 
 {# Confirmation modal for Apollo enrichment — nothing is spent until confirmed. #}
 <div id="enrich-modal" class="modal-backdrop" hidden>

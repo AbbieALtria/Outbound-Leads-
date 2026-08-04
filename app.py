@@ -719,6 +719,8 @@ def dashboard():
         campaigns=campaigns, active_campaign=active_campaign,
         selected_campaign=selected_campaign,
         quota=quota, restrict_campaigns=restrict_campaigns,
+        can_discard=pull_run_discardable(conn, run_id)[0],
+        discard_reason=pull_run_discardable(conn, run_id)[1],
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         default_target=db.get_setting(conn, "target_leads_per_day", "100"),
         countries=COUNTRIES, states_by_country=STATES_BY_COUNTRY,
@@ -780,6 +782,40 @@ def settings():
     )
 
 
+def export_filename(conn, args, leads, prefix=""):
+    """Descriptive export name: {campaign|industry}_{city|multi}_{YYYYMMDD}_{HHMM}.csv
+
+    Shared by BOTH export routes. The campaign comes from an explicit campaign_id
+    or the exported run's campaign; with no campaign (a quick one-off pull) the
+    industry is used instead. The city is read off the exported leads themselves —
+    a single city by name, several as "multi" — so the name reflects what's
+    actually in the file. Timestamped at export time, not pull time."""
+    def slug(text):
+        return re.sub(r"[^a-z0-9]+", "_", (text or "").lower()).strip("_")
+
+    name, row = "", None
+    if args.get("campaign_id"):
+        row = conn.execute("SELECT name FROM campaigns WHERE id = ?",
+                           (args.get("campaign_id"),)).fetchone()
+    elif args.get("run_id"):
+        row = conn.execute(
+            "SELECT cp.name AS name FROM pull_runs r "
+            "LEFT JOIN campaigns cp ON cp.id = r.campaign_id WHERE r.id = ?",
+            (args.get("run_id"),)).fetchone()
+    if row and row["name"]:
+        name = row["name"]
+    if not name:      # no campaign -> fall back to the industry
+        inds = {(l["industry"] or "").strip() for l in leads if (l["industry"] or "").strip()}
+        name = inds.pop() if len(inds) == 1 else (args.get("industry") or "leads")
+
+    cities = {(l["city"] or "").strip() for l in leads if (l["city"] or "").strip()}
+    city = cities.pop() if len(cities) == 1 else ("multi" if cities else "")
+
+    parts = [slug(p) for p in (prefix, name, city) if p]
+    parts.append(datetime.now().strftime("%Y%m%d_%H%M"))
+    return "_".join(p for p in parts if p) + ".csv"
+
+
 @app.route("/export.csv")
 def export_csv():
     conn = get_db()
@@ -794,7 +830,7 @@ def export_csv():
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
     writer.writerows([dict(lead) for lead in leads])
-    name = f"leads_{request.args.get('date') or 'all'}.csv"
+    name = export_filename(conn, request.args, leads)
     return app.response_class(
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={name}"},
@@ -959,19 +995,52 @@ def export_vicidial():
             cbt = cb_by_phone.get(normalize_phone(lead["phone"]))
             row["Callback_Time"] = str(cbt)[:16] if cbt else ""
         writer.writerow(row)
-    if request.args.get("requeue") == "active":
-        parts = ["requeue"]
-        for k in ("campaign", "industry", "rq_date"):
-            v = request.args.get(k)
-            if v:
-                parts.append(re.sub(r"[^\w-]", "", v))
-        name = "vicidial_" + "_".join(parts) + ".csv"
-    else:
-        name = f"vicidial_{request.args.get('date') or 'all'}.csv"
+    prefix = "requeue" if request.args.get("requeue") == "active" else "vicidial"
+    name = export_filename(conn, request.args, leads, prefix=prefix)
     return app.response_class(
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={name}"},
     )
+
+
+def pull_run_discardable(conn, run_id):
+    """(can_discard, reason). A pull can only be discarded while nobody has acted
+    on its leads — any non-'new' status or a requeue entry means someone has
+    already worked them, so deleting would destroy real work."""
+    if not run_id:
+        return False, "No pull selected."
+    n = conn.execute("SELECT COUNT(*) AS n FROM leads WHERE run_id = ?", (run_id,)).fetchone()["n"]
+    if not n:
+        return False, "This pull has no leads to discard."
+    acted = conn.execute(
+        "SELECT COUNT(*) AS n FROM leads WHERE run_id = ? AND status != 'new'", (run_id,)
+    ).fetchone()["n"]
+    if acted:
+        return False, (f"{acted} lead(s) in this pull already have a call status — "
+                       "discarding would delete work that's already been done.")
+    queued = conn.execute(
+        "SELECT COUNT(*) AS n FROM requeue_leads r JOIN leads l ON l.id = r.lead_id "
+        "WHERE l.run_id = ?", (run_id,)).fetchone()["n"]
+    if queued:
+        return False, (f"{queued} lead(s) from this pull are in the redial queue — "
+                       "discarding would remove leads already in the dialing cycle.")
+    return True, ""
+
+
+@app.route("/pull_runs/<int:run_id>/discard", methods=["POST"])
+def pull_run_discard(run_id):
+    """Permanently delete this pull's leads. The pull_runs row is KEPT and marked
+    'discarded' so Activity still shows the pull happened (with 0 surviving leads)."""
+    conn = get_db()
+    ok, reason = pull_run_discardable(conn, run_id)
+    if not ok:
+        return redirect(url_for("dashboard", run_id=run_id, error=reason))
+    conn.execute("DELETE FROM leads WHERE run_id = ?", (run_id,))
+    conn.execute("UPDATE pull_runs SET status = 'discarded', message = ? WHERE id = ?",
+                 ("Discarded by " + (g.user["username"] if getattr(g, "user", None) else "user"),
+                  run_id))
+    conn.commit()
+    return redirect(url_for("dashboard", discarded=1))
 
 
 @app.route("/pull_runs/<int:run_id>/rate", methods=["POST"])
