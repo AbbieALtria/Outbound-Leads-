@@ -178,6 +178,27 @@ function currentCity() {
   render();
 })();
 
+// ---- discovery source selector (healthcare-only, US) ----
+(function initSource() {
+  const wrap = document.getElementById("source-wrap");
+  const sel = document.getElementById("pull-source");
+  const industry = document.getElementById("pull-industry");
+  const country = document.getElementById("pull-country");
+  if (!wrap || !sel || !industry) return;
+  let ok = [];
+  try { ok = JSON.parse(sel.dataset.nppesIndustries || "[]"); } catch { ok = []; }
+  const sync = () => {
+    // NPPES is US-only and covers licensed provider types only.
+    const usable = ok.includes(industry.value) &&
+                   (!country || country.value === "United States");
+    wrap.hidden = !usable;
+    if (!usable) sel.value = "maps";
+  };
+  industry.addEventListener("change", sync);
+  country?.addEventListener("change", sync);
+  sync();
+})();
+
 // ---- status buttons ----
 document.querySelectorAll("tr[data-lead-id]").forEach((row) => {
   const leadId = row.dataset.leadId;
@@ -330,6 +351,9 @@ if (pullBtn) {
         payload.industries = [industry];
       }
       if (campaignId) payload.campaign_id = Number(campaignId);
+      const srcEl = document.getElementById("pull-source");
+      const srcWrap = document.getElementById("source-wrap");
+      if (srcEl && srcWrap && !srcWrap.hidden) payload.source = srcEl.value;
       const locations = parseLocations();
       if (locations.length) {
         payload.locations = locations;   // multi-city sweep

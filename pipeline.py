@@ -20,6 +20,7 @@ from pathlib import Path
 import requests
 
 import db
+import nppes
 import dnc
 import scoring
 
@@ -408,6 +409,29 @@ def _is_cancelled(conn, run_id):
     return bool(row and row["cancel"])
 
 
+_STATE_CODES = {
+    "alabama":"AL","alaska":"AK","arizona":"AZ","arkansas":"AR","california":"CA",
+    "colorado":"CO","connecticut":"CT","delaware":"DE","florida":"FL","georgia":"GA",
+    "hawaii":"HI","idaho":"ID","illinois":"IL","indiana":"IN","iowa":"IA","kansas":"KS",
+    "kentucky":"KY","louisiana":"LA","maine":"ME","maryland":"MD","massachusetts":"MA",
+    "michigan":"MI","minnesota":"MN","mississippi":"MS","missouri":"MO","montana":"MT",
+    "nebraska":"NE","nevada":"NV","new hampshire":"NH","new jersey":"NJ","new mexico":"NM",
+    "new york":"NY","north carolina":"NC","north dakota":"ND","ohio":"OH","oklahoma":"OK",
+    "oregon":"OR","pennsylvania":"PA","rhode island":"RI","south carolina":"SC",
+    "south dakota":"SD","tennessee":"TN","texas":"TX","utah":"UT","vermont":"VT",
+    "virginia":"VA","washington":"WA","west virginia":"WV","wisconsin":"WI",
+    "wyoming":"WY","district of columbia":"DC",
+}
+
+
+def abbrev_state_code(state):
+    """2-letter US state code (NPPES requires it); '' for anything non-US."""
+    s = (state or "").strip()
+    if len(s) == 2:
+        return s.upper()
+    return _STATE_CODES.get(s.lower(), "")
+
+
 def _norm_name(name):
     """Loose key for matching the same business across locations: lowercased,
     punctuation + common legal suffixes stripped."""
@@ -450,7 +474,7 @@ def _stamp_location_counts(conn, run_id, rules, log=print):
 
 
 def run_pull(industry_slugs, target, api_key, location=None, locations=None,
-             run_id=None, campaign_id=None, db_path=db.DB_FILE, log=print):
+             run_id=None, campaign_id=None, source="maps", db_path=db.DB_FILE, log=print):
     """Execute one pull. Returns the number of leads added.
 
     industry_slugs: one slug, a comma-separated string, or a list of slugs.
@@ -560,8 +584,17 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                 log(f"Querying: '{query_text}' (up to {pull_limit})")
 
                 try:
-                    places = query_outscraper(api_key, query_text, pull_limit,
-                                              enrich_contacts=enrich)
+                    places = []
+                    if source in ("maps", "both"):
+                        places += query_outscraper(api_key, query_text, pull_limit,
+                                                   enrich_contacts=enrich)
+                    if source in ("nppes", "both") and nppes.supports(slug):
+                        # Free US provider registry. No website/reviews — those
+                        # signals just don't fire for these leads.
+                        places += nppes.query_nppes(
+                            slug, city=target_loc["city"],
+                            state=abbrev_state_code(target_loc["state"]),
+                            limit=pull_limit)
                 except RuntimeError as e:
                     query_errors += 1
                     last_error = str(e)
@@ -576,6 +609,14 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     name = (place.get("name") or place.get("title") or "").strip()
                     phone = (place.get("phone") or place.get("phone_number") or "").strip()
 
+                    # NPPES occasionally has no phone. Rather than drop the lead,
+                    # keep it under a unique NPI-based key and mark the phone
+                    # invalid — dialable_leads() already excludes phone_valid=0,
+                    # so it can't reach VICIdial until a number is found.
+                    needs_phone = False
+                    if not phone and place.get("npi"):
+                        phone = f"NPI-{place['npi']}"
+                        needs_phone = True
                     if not name or not phone:
                         continue
                     if is_chain(name, chain_names):
@@ -607,10 +648,10 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     cur = conn.execute(
                         "INSERT OR IGNORE INTO leads (phone, business_name, address, city, state, "
                         "website, category, industry, score, call_hook, pulled_date, "
-                        "email, contact, postcode, search_query, run_id, campaign_id, "
+                        "email, contact, postcode, search_query, run_id, campaign_id, phone_valid, "
                         "reviews, rating, unclaimed, street_address, maps_url, "
                         "country, facebook, business_status) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             phone, name, address,
                             place.get("city") or target_loc["city"],
@@ -622,6 +663,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                             extract_contact(place),
                             extract_postcode(place, address),
                             query_text, run_id, campaign_id,
+                            0 if needs_phone else 1,
                             reviews, rating, unclaimed,
                             place.get("street") or "",
                             place.get("location_link") or place.get("url") or "",

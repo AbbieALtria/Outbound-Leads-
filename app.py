@@ -19,6 +19,7 @@ from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 
 import ai_industries
+import nppes
 import compliance
 import contacts
 import db
@@ -795,6 +796,7 @@ def dashboard():
         last_country=db.get_setting(conn, "last_country", "United States"),
         api_key_set=bool(pipeline.get_api_key()),
         apollo_enabled=contacts.enabled(),
+        nppes_industries=nppes.supported_industries(),
         # Drive the enrichment confirmation modal's cost estimate.
         enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
         enrich_reveal_phone=db.get_setting(conn, "enrich_reveal_phone", "0") == "1",
@@ -1598,11 +1600,11 @@ def set_lead_notes(lead_id):
 # ---------------------------------------------------------------- pull control
 
 def _pull_worker(run_id, industries, target, api_key, location, campaign_id=None,
-                 locations=None):
+                 locations=None, source="maps"):
     try:
         pipeline.run_pull(industries, target, api_key, location=location,
                           locations=locations, run_id=run_id,
-                          campaign_id=campaign_id, log=lambda *_: None)
+                          campaign_id=campaign_id, source=source, log=lambda *_: None)
     except Exception:
         pass  # error is already recorded on the pull_runs row
     finally:
@@ -1630,6 +1632,15 @@ def start_pull():
         if not camp:
             return jsonify({"error": "Unknown campaign"}), 400
 
+    source = (payload.get("source") or "maps").strip()
+    if source not in ("maps", "nppes", "both"):
+        return jsonify({"error": "Unknown source"}), 400
+    if source in ("nppes", "both") and not any(nppes.supports(i) for i in
+                                               (payload.get("industries") or [])):
+        if source == "nppes":
+            return jsonify({"error": "NPPES only covers licensed US healthcare "
+                            "provider types — pick one of: "
+                            + ", ".join(nppes.supported_industries())}), 400
     if payload.get("all_industries"):
         # Sweep the whole catalog — the pull loops every industry until the target
         # is hit (raise the target to reach more of them).
@@ -1718,7 +1729,7 @@ def start_pull():
     threading.Thread(
         target=_pull_worker,
         args=(run_id, industries, target, api_key, location, camp["id"] if camp else None),
-        kwargs={"locations": locations},
+        kwargs={"locations": locations, "source": source},
         daemon=True,
     ).start()
     return jsonify({"ok": True, "run_id": run_id})

@@ -61,6 +61,16 @@
             data-known='{{ known_by_state|tojson }}'
             data-last-city="{{ pre_city }}"></select>
     <input id="pull-city-new" class="geo" type="text" placeholder="Type city" autocomplete="off" hidden>
+    {# Second discovery source. Only meaningful for licensed US healthcare provider
+       types, so JS hides this unless the picked industry is one of them. #}
+    <span id="source-wrap" hidden>
+      <select id="pull-source" title="Where to discover leads from"
+              data-nppes-industries='{{ nppes_industries|tojson }}'>
+        <option value="maps">Google Maps</option>
+        <option value="nppes">NPPES Registry (US healthcare, free)</option>
+        <option value="both">Both</option>
+      </select>
+    </span>
     <input id="pull-target" type="number" min="1" max="1000" value="{{ default_target }}" title="How many leads to pull">
     <button id="pull-btn" class="primary" data-campaign="{{ selected_campaign['id'] if selected_campaign }}" {{ 'disabled' if not api_key_set }}>Pull New Leads</button>
     <button id="stop-btn" class="danger" hidden>Stop</button>
