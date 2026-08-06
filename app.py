@@ -156,7 +156,71 @@ def activity_page():
         "LEFT JOIN clients cl ON cl.id = cp.client_id "
         "ORDER BY r.id DESC LIMIT 200"
     ).fetchall()
-    return render_template("activity.html", runs=runs)
+    diag = score_outcome_report(conn, request.args)
+    campaigns = conn.execute(
+        "SELECT id, name FROM campaigns ORDER BY status, name").fetchall()
+    return render_template("activity.html", runs=runs, diag=diag,
+                           campaigns=campaigns, f=request.args)
+
+
+# Outcome buckets. 'dnc' is a compliance removal, not a sales outcome, so it is
+# excluded everywhere below; 'callback' means contacted-but-undecided, so it sits
+# with 'called' rather than counting as a positive or a rejection.
+_BUCKET_SQL = """CASE
+    WHEN status = 'not_interested' THEN 'rejected'
+    WHEN status IN ('interested', 'appointment') THEN 'positive'
+    WHEN status IN ('called', 'callback') THEN 'contacted'
+    WHEN status = 'new' THEN 'new'
+    ELSE 'other' END"""
+
+
+def score_outcome_report(conn, args):
+    """Does a higher score correlate with MORE rejection? If the multi-location
+    signal is really finding big businesses that already have a vendor (rather
+    than an unsolved need), 'not_interested' will skew to higher scores and
+    multi-location leads will reject at a higher rate than single-location ones.
+
+    Every figure carries its own sample size — with small n these are directional
+    at best, so the template must never show a bare percentage."""
+    where, params = ["status != 'dnc'"], []
+    if args.get("campaign_id"):
+        where.append("campaign_id = ?")
+        params.append(args["campaign_id"])
+    if args.get("from"):
+        where.append("pulled_date >= ?")
+        params.append(args["from"])
+    if args.get("to"):
+        where.append("pulled_date <= ?")
+        params.append(args["to"])
+    clause = " AND ".join(where)
+
+    by_outcome = conn.execute(
+        f"SELECT {_BUCKET_SQL} AS bucket, COUNT(*) AS n, "
+        f"       ROUND(AVG(score), 1) AS avg_score, MIN(score) AS lo, MAX(score) AS hi "
+        f"FROM leads WHERE {clause} GROUP BY bucket", params).fetchall()
+    order = {"rejected": 0, "positive": 1, "contacted": 2, "new": 3, "other": 4}
+    outcomes = sorted((dict(r) for r in by_outcome),
+                      key=lambda d: order.get(d["bucket"], 9))
+
+    # Rejection rate is only meaningful among leads actually CONTACTED — a 'new'
+    # lead hasn't had the chance to reject.
+    by_loc = conn.execute(
+        f"SELECT CASE WHEN COALESCE(location_count, 1) >= 2 THEN 'multi' ELSE 'single' END AS loc, "
+        f"       COUNT(*) AS contacted, "
+        f"       SUM(CASE WHEN status = 'not_interested' THEN 1 ELSE 0 END) AS rejected, "
+        f"       ROUND(AVG(score), 1) AS avg_score "
+        f"FROM leads WHERE {clause} AND status NOT IN ('new') GROUP BY loc", params).fetchall()
+    loc_rows = []
+    for r in by_loc:
+        d = dict(r)
+        d["rate"] = round(100.0 * d["rejected"] / d["contacted"], 1) if d["contacted"] else None
+        loc_rows.append(d)
+    loc_rows.sort(key=lambda d: 0 if d["loc"] == "multi" else 1)
+
+    contacted_total = sum(d["contacted"] for d in loc_rows)
+    return {"outcomes": outcomes, "by_location": loc_rows,
+            "contacted_total": contacted_total,
+            "total": sum(d["n"] for d in outcomes)}
 
 
 @app.route("/change-password", methods=["GET", "POST"])

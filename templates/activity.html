@@ -3,6 +3,90 @@
 {% block content %}
 
 <section class="card wide">
+  <h2>Score vs. outcome</h2>
+  <p class="dim small">One question: <strong>are higher-scored leads getting rejected more often?</strong>
+  If they are — and multi-location leads especially — the score may be finding big, established
+  businesses that already have a vendor, rather than ones with an unsolved need.</p>
+
+  <form method="get" class="inline-form" style="margin-bottom:10px;">
+    <label class="dim small">Campaign
+      <select name="campaign_id">
+        <option value="">All campaigns</option>
+        {% for c in campaigns %}
+        <option value="{{ c['id'] }}" {{ 'selected' if f.get('campaign_id') == c['id']|string }}>{{ c['name'] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="dim small">From <input type="date" name="from" value="{{ f.get('from','') }}"></label>
+    <label class="dim small">To <input type="date" name="to" value="{{ f.get('to','') }}"></label>
+    <button type="submit">Apply</button>
+    <a class="button" href="{{ url_for('activity_page') }}">Reset</a>
+  </form>
+
+  {% if not diag.total %}
+    <p class="empty">No leads match this filter yet.</p>
+  {% elif not diag.contacted_total %}
+    <p class="warn">{{ diag.total }} lead(s) match, but <strong>none have been called yet</strong> —
+    outcomes only appear once call results come back (Call Log import or the requeue pull), so there's
+    nothing to compare here yet.</p>
+  {% endif %}
+
+  {% if diag.outcomes %}
+  <h3 style="margin-bottom:4px;">Average score by outcome</h3>
+  <div class="table-wrap">
+  <table class="leads">
+    <thead><tr><th>Outcome</th><th>Leads (n)</th><th>Avg score</th><th>Range</th></tr></thead>
+    <tbody>
+      {% for o in diag.outcomes %}
+      <tr>
+        <td class="nowrap">
+          {% if o.bucket == 'rejected' %}<span class="badge badge-hot">not interested</span>
+          {% elif o.bucket == 'positive' %}<span class="badge badge-ok">interested / appointment</span>
+          {% elif o.bucket == 'contacted' %}<span class="badge">called — no outcome yet</span>
+          {% elif o.bucket == 'new' %}<span class="badge">not called yet</span>
+          {% else %}<span class="badge">{{ o.bucket }}</span>{% endif %}
+        </td>
+        <td><strong>{{ o.n }}</strong></td>
+        <td><strong>{{ o.avg_score }}</strong></td>
+        <td class="dim small">{{ o.lo }}–{{ o.hi }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="dim small">Read it this way: if <em>not interested</em> shows a <strong>higher</strong> average
+  score than <em>interested / appointment</em>, the score is currently pointing at the wrong businesses.</p>
+  {% endif %}
+
+  {% if diag.by_location %}
+  <h3 style="margin:14px 0 4px;">Rejection rate — multi-location vs. single</h3>
+  <div class="table-wrap">
+  <table class="leads">
+    <thead><tr><th>Type</th><th>Contacted (n)</th><th>Not interested</th><th>Rejection rate</th><th>Avg score</th></tr></thead>
+    <tbody>
+      {% for l in diag.by_location %}
+      <tr>
+        <td class="nowrap">{{ 'Multi-location (2+)' if l.loc == 'multi' else 'Single location' }}</td>
+        <td><strong>{{ l.contacted }}</strong></td>
+        <td>{{ l.rejected }}</td>
+        <td>{% if l.rate is not none %}<strong>{{ l.rate }}%</strong>
+            <span class="dim small">of {{ l.contacted }}</span>{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td class="dim">{{ l.avg_score }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="dim small">Rates are out of <strong>contacted</strong> leads only (uncalled leads can't reject).
+  This isolates multi-location specifically, rather than score in general.</p>
+  {% if diag.contacted_total and diag.contacted_total < 30 %}
+  <p class="warn">⚠️ Only {{ diag.contacted_total }} contacted lead(s) — far too few to conclude anything.
+  Treat this as a first look, not evidence; a couple of calls either way swings these percentages hard.</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="card wide">
   <h2>Activity</h2>
   <p class="dim small">Every lead pull — who ran it, when, for which campaign, what industry, and how many leads. Click a row to see exactly those leads.</p>
 </section>
