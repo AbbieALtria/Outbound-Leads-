@@ -14,6 +14,7 @@
       <th>Score</th>
       <th>Call hook</th>
       {% if show_date %}<th>Pulled</th>{% endif %}
+      <th>Outcome</th>
       <th>Notes</th>
     </tr>
   </thead>
@@ -69,6 +70,21 @@
         {% else %}<span class="dim">— no angle for this campaign</span>{% endif %}
       </td>
       {% if show_date %}<td class="nowrap dim small">{{ lead['pulled_date'] }}</td>{% endif %}
+      <td class="nowrap outcome-cell">
+        {# Same lightweight button row as before; the reason picker appears inline
+           only once "No" is the active outcome. #}
+        <button class="sbtn sbtn-called {{ 'on' if lead['status'] == 'called' }}" data-status="called" title="Called, no outcome yet">Called</button>
+        <button class="sbtn sbtn-interested {{ 'on' if lead['status'] == 'interested' }}" data-status="interested" title="Interested">Int.</button>
+        <button class="sbtn sbtn-not_interested {{ 'on' if lead['status'] == 'not_interested' }}" data-status="not_interested" title="Not interested">No</button>
+        <button class="sbtn sbtn-callback {{ 'on' if lead['status'] == 'callback' }}" data-status="callback" title="Call back later">CB</button>
+        <select class="ni-reason" title="Why not interested? (optional)"
+                {{ '' if lead['status'] == 'not_interested' else 'hidden' }}>
+          <option value="">why? (optional)</option>
+          {% for r in not_interested_reasons %}
+          <option value="{{ r }}" {{ 'selected' if lead['not_interested_reason'] == r }}>{{ r.replace('_', ' ') }}</option>
+          {% endfor %}
+        </select>
+      </td>
       <td><input class="notes" type="text" value="{{ lead['notes'] }}" placeholder="notes…"></td>
     </tr>
     {% endfor %}

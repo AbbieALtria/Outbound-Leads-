@@ -216,8 +216,31 @@ document.querySelectorAll("tr[data-lead-id]").forEach((row) => {
       row.querySelectorAll(".sbtn").forEach((b) => b.classList.remove("on"));
       if (newStatus !== "new") btn.classList.add("on");
       row.className = `status-${newStatus}`;
+      // The reason picker only applies to "not interested"; hide + reset it
+      // otherwise so a stale reason can't linger on a different outcome.
+      if (reason) {
+        reason.hidden = newStatus !== "not_interested";
+        if (newStatus !== "not_interested") reason.value = "";
+      }
     });
   });
+
+  // Inline sub-reason for a "no" — optional, saves on change, no reload.
+  const reason = row.querySelector(".ni-reason");
+  if (reason) {
+    reason.addEventListener("change", async () => {
+      try {
+        await postJSON(`/api/leads/${leadId}/status`, {
+          status: "not_interested",
+          not_interested_reason: reason.value,
+        });
+        reason.classList.add("saved");
+        setTimeout(() => reason.classList.remove("saved"), 1200);
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+  }
 
   const notes = row.querySelector(".notes");
   if (notes) {

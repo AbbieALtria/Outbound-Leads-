@@ -218,8 +218,18 @@ def score_outcome_report(conn, args):
         loc_rows.append(d)
     loc_rows.sort(key=lambda d: 0 if d["loc"] == "multi" else 1)
 
+    reasons = [dict(r) for r in conn.execute(
+        f"SELECT COALESCE(NULLIF(not_interested_reason, ''), '(not recorded)') AS reason, "
+        f"       COUNT(*) AS n, ROUND(AVG(score), 1) AS avg_score "
+        f"FROM leads WHERE {clause} AND status = 'not_interested' "
+        f"GROUP BY reason ORDER BY n DESC", params)]
+    rejected_total = sum(r["n"] for r in reasons)
+    for r in reasons:
+        r["pct"] = round(100.0 * r["n"] / rejected_total, 1) if rejected_total else 0
+
     contacted_total = sum(d["contacted"] for d in loc_rows)
-    return {"outcomes": outcomes, "by_location": loc_rows,
+    return {"reasons": reasons, "rejected_total": rejected_total,
+            "outcomes": outcomes, "by_location": loc_rows,
             "contacted_total": contacted_total,
             "total": sum(d["n"] for d in outcomes)}
 
@@ -781,6 +791,7 @@ def dashboard():
         industries=industries, statuses=db.LEAD_STATUSES, counts=counts,
         current_status=request.args.get("status", ""),
         total_leads=total_leads,
+        not_interested_reasons=db.NOT_INTERESTED_REASONS,
         campaigns=campaigns, active_campaign=active_campaign,
         selected_campaign=selected_campaign,
         quota=quota, restrict_campaigns=restrict_campaigns,
@@ -817,6 +828,7 @@ def history():
         "history.html", leads=leads,
         countries=distinct("country"), states=distinct("state"), cities=distinct("city"),
         industries=industries, statuses=db.LEAD_STATUSES, f=request.args,
+        not_interested_reasons=db.NOT_INTERESTED_REASONS,
         user_list=user_list,
         out_of_hours=out_of_hours_count(conn, request.args),
     )
@@ -890,8 +902,8 @@ def export_csv():
     if request.args.get("status") != "dnc":
         leads = [lead for lead in leads if lead["status"] != "dnc"]
     fields = ["business_name", "phone", "address", "city", "state",
-              "website", "category", "score", "call_hook", "status", "notes",
-              "pulled_date"]
+              "website", "category", "score", "call_hook", "status",
+              "not_interested_reason", "notes", "pulled_date"]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
@@ -1579,13 +1591,21 @@ def set_lead_status(lead_id):
     status = (request.json or {}).get("status", "")
     if status not in db.LEAD_STATUSES:
         return jsonify({"error": f"Invalid status '{status}'"}), 400
+    # Sub-reason only makes sense for a 'no'. Any other status clears it, so a
+    # stale reason can never linger on a lead that later became interested.
+    reason = (request.json or {}).get("not_interested_reason") or ""
+    if status != "not_interested":
+        reason = ""
+    elif reason and reason not in db.NOT_INTERESTED_REASONS:
+        return jsonify({"error": f"Invalid reason '{reason}'"}), 400
     conn = get_db()
     conn.execute(
-        "UPDATE leads SET status = ?, status_updated_at = ? WHERE id = ?",
-        (status, db.now_iso(), lead_id),
+        "UPDATE leads SET status = ?, status_updated_at = ?, not_interested_reason = ? "
+        "WHERE id = ?",
+        (status, db.now_iso(), reason, lead_id),
     )
     conn.commit()
-    return jsonify({"ok": True, "status": status})
+    return jsonify({"ok": True, "status": status, "not_interested_reason": reason})
 
 
 @app.route("/api/leads/<int:lead_id>/notes", methods=["POST"])

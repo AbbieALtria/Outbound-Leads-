@@ -30,6 +30,18 @@ DB_FILE = DATA_DIR / "leads.db"
 OLD_SEEN_DB = SCRIPT_DIR / "seen_leads.sqlite3"
 OLD_CITIES_FILE = SCRIPT_DIR / "cities.txt"
 
+# Structured sub-reasons for a 'not_interested' outcome, so the biggest bucket
+# isn't a black box. Optional per lead — some calls have no clean answer.
+NOT_INTERESTED_REASONS = [
+    "already_has_provider",   # "we already use someone for this"
+    "no_pain_identified",     # "we don't see a need"
+    "brush_off",              # polite decline, no real engagement
+    "bad_timing",             # "call back later / not right now"
+    "wrong_contact",          # reached someone who can't decide
+    "price_objection",        # cost came up as the blocker
+    "other",
+]
+
 LEAD_STATUSES = ["new", "called", "interested", "appointment", "not_interested",
                  "callback", "dnc"]
 
@@ -308,6 +320,9 @@ LEAD_EXTRA_COLUMNS = {
     "company_revenue": "TEXT",
     "company_industry": "TEXT",
     # Review mining (opt-in `review_signals`; Outscraper reviews cost per review).
+    # Why a lead said no (one of NOT_INTERESTED_REASONS); only set while
+    # status = not_interested.
+    "not_interested_reason": "TEXT",
     "first_review_date": "TEXT",
     "review_text_sample": "TEXT",
     # Market + provenance. B2B leads are pulled from Maps; B2C leads arrive via

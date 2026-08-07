@@ -58,6 +58,28 @@
   score than <em>interested / appointment</em>, the score is currently pointing at the wrong businesses.</p>
   {% endif %}
 
+  {% if diag.reasons %}
+  <h3 style="margin:14px 0 4px;">Why they said no <span class="dim small">({{ diag.rejected_total }} rejections)</span></h3>
+  <div class="table-wrap">
+  <table class="leads">
+    <thead><tr><th>Reason</th><th>Count (n)</th><th>Share</th><th>Avg score</th></tr></thead>
+    <tbody>
+      {% for r in diag.reasons %}
+      <tr>
+        <td class="nowrap">{{ r.reason.replace('_', ' ') }}</td>
+        <td><strong>{{ r.n }}</strong></td>
+        <td>{{ r.pct }}% <span class="dim small">of {{ diag.rejected_total }}</span></td>
+        <td class="dim">{{ r.avg_score }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="dim small">If <em>already has provider</em> dominates, the score is finding established
+  businesses with an existing vendor. If <em>no pain identified</em> dominates, the offer isn't landing.
+  Recording a reason is optional, so <em>(not recorded)</em> rows are expected.</p>
+  {% endif %}
+
   {% if diag.by_location %}
   <h3 style="margin:14px 0 4px;">Rejection rate — multi-location vs. single</h3>
   <div class="table-wrap">
