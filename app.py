@@ -1835,16 +1835,18 @@ def verify_phones_status():
 _enrich_lock = threading.Lock()
 
 
-def _enrich_worker(lead_ids, reveal_email, reveal_phone):
+def _enrich_worker(lead_ids, reveal_email, reveal_phone, force=False):
     try:
         conn = db.connect()
         rows = conn.execute(
-            f"SELECT id, website, contact, email, employee_count FROM leads "
+            f"SELECT id, website, contact, email, employee_count, "
+            f"enrich_attempted_at, org_enrich_attempted_at FROM leads "
             f"WHERE id IN ({','.join('?' * len(lead_ids))})",
             lead_ids,
         ).fetchall()
         result = contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
-                                       reveal_phone=reveal_phone, log=lambda *_: None)
+                                       reveal_phone=reveal_phone, log=lambda *_: None,
+                                       force=force)
         db.set_setting(conn, "enrich_last_result", json.dumps(result))
         conn.commit()
         conn.close()
@@ -1891,10 +1893,13 @@ def enrich_contacts():
 
     reveal_email = db.get_setting(conn, "enrich_reveal_email", "1") == "1"
     reveal_phone = db.get_setting(conn, "enrich_reveal_phone", "0") == "1"
+    # Opt-in re-check of leads Apollo was already asked about (spends credits again).
+    force = bool(args.get("force"))
     if not _enrich_lock.acquire(blocking=False):
         return jsonify({"error": "An enrichment run is already in progress"}), 409
     threading.Thread(
-        target=_enrich_worker, args=(lead_ids, reveal_email, reveal_phone), daemon=True
+        target=_enrich_worker, args=(lead_ids, reveal_email, reveal_phone, force),
+        daemon=True
     ).start()
     return jsonify({"ok": True, "count": len(lead_ids)})
 

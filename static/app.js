@@ -526,7 +526,8 @@ if (enrichBtn) {
       eresult.textContent =
         `Enriched ${r.enriched || 0} of ${r.checked || 0} Apollo calls — ` +
         `${r.emails || 0} emails, ${r.phones || 0} direct dials. ` +
-        `Skipped ${r.skipped_already_enriched || 0} already-enriched (Apollo credits saved). ` +
+        `Skipped ${(r.skipped_already_enriched || 0) + (r.skipped_already_attempted || 0)} ` +
+        `already-enriched or already-checked (Apollo credits saved). ` +
         `${r.org_calls || 0} company lookups (1 credit each).`;
       setTimeout(() => location.reload(), 1800);
     }

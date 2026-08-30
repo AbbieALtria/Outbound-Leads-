@@ -15,6 +15,7 @@ should be verified against a live Apollo account before running at scale.
 
 import os
 import re
+from datetime import datetime
 
 import requests
 
@@ -143,20 +144,40 @@ def _reveal(person, domain, reveal_email, reveal_phone, timeout):
         return {}
 
 
-def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=print):
+def _val(row, key):
+    """Read an optional column off a sqlite3.Row (older callers may not select it)."""
+    return (row[key] if key in row.keys() else None)
+
+
+def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=print,
+                 force=False):
     """Enrich each website-having lead with a decision-maker via Apollo — as a
     WATERFALL over Outscraper's own enrichment:
       - if BOTH contact and email are already present (Outscraper's
         extract_contact/extract_email succeeded during the pull) -> skip Apollo
         entirely (counted as skipped_already_enriched).
-      - if only one is missing -> call Apollo but write ONLY the missing field(s),
-        never overwriting what Outscraper already found (a paid reveal for an
+      - if Apollo has ALREADY been asked about this lead on an earlier run
+        (enrich_attempted_at is set) -> skip too, even when the record it produced
+        is partial (contact but no email, or nothing at all). Apollo will return
+        the same gap on a re-run, so paying for it again buys nothing; counted as
+        skipped_already_attempted.
+      - otherwise -> call Apollo but write ONLY the missing field(s), never
+        overwriting what Outscraper already found (a paid reveal for an
         email/contact we already have is wasted).
-    Returns {checked, enriched, emails, phones, skipped_already_enriched, error}
-    where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
-    avoided."""
+    Org enrichment (1 credit/org) follows the same rule: skipped once the lead has
+    firmographics OR an org lookup was already attempted for it.
+
+    An attempt is only stamped when Apollo actually answered — a transport/API
+    failure (bad key, rate limit) leaves the lead eligible for a later retry.
+    Pass force=True to re-enrich regardless, for a deliberate refresh.
+
+    Returns {checked, enriched, emails, phones, skipped_already_enriched,
+    skipped_already_attempted, org_calls, error} where `checked` is Apollo contact
+    calls MADE."""
     checked = enriched = emails = phones = skipped = org_calls = 0
+    skipped_attempted = 0
     error = ""
+    now = datetime.now().isoformat(timespec="seconds")
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     for row in lead_rows:
         website = (row["website"] if "website" in row.keys() else "") or ""
@@ -164,9 +185,11 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
             continue
 
         # Company firmographics: once per unique domain in this run (1 credit each),
-        # and never re-fetched for a lead that already has them.
+        # never re-fetched for a lead that already has them, and never re-paid for
+        # a lead whose earlier lookup came back empty (org_enrich_attempted_at).
         have_org = ("employee_count" in row.keys()) and row["employee_count"] is not None
-        dom = "" if have_org else domain_of(website)
+        org_tried = bool(_val(row, "org_enrich_attempted_at"))
+        dom = "" if (have_org or (org_tried and not force)) else domain_of(website)
         if dom and dom not in org_cache:
             try:
                 org_cache[dom] = enrich_organization(website)
@@ -175,18 +198,31 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
                 org_cache[dom] = {}
                 if not error:
                     error = str(e)
-        org = org_cache.get(dom) or {}
-        if org:
-            conn.execute(
-                "UPDATE leads SET employee_count = ?, company_revenue = ?, "
-                "company_industry = ? WHERE id = ?",
-                (org.get("employee_count"), org.get("revenue", ""),
-                 org.get("industry", ""), row["id"]))
+                dom = ""            # API failed — stay eligible for a later retry
+        if dom:
+            org = org_cache.get(dom) or {}
+            if org:
+                conn.execute(
+                    "UPDATE leads SET employee_count = ?, company_revenue = ?, "
+                    "company_industry = ?, org_enrich_attempted_at = ? WHERE id = ?",
+                    (org.get("employee_count"), org.get("revenue", ""),
+                     org.get("industry", ""), now, row["id"]))
+            else:
+                # Apollo answered with no match: record the attempt so this lead
+                # isn't charged for the same empty answer on every future run.
+                conn.execute(
+                    "UPDATE leads SET org_enrich_attempted_at = ? WHERE id = ?",
+                    (now, row["id"]))
         have_contact = bool(((row["contact"] if "contact" in row.keys() else "") or "").strip())
         have_email = bool(((row["email"] if "email" in row.keys() else "") or "").strip())
         # Waterfall: Outscraper already got both -> don't spend an Apollo call.
         if have_contact and have_email:
             skipped += 1
+            continue
+        # Already asked Apollo about this lead on an earlier run — a partial or
+        # empty result is Apollo's answer, not a reason to pay for it again.
+        if _val(row, "enrich_attempted_at") and not force:
+            skipped_attempted += 1
             continue
         checked += 1
         try:
@@ -200,8 +236,9 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
                 error = str(e)
             log(f"  enrich failed for lead {row['id']}: {e}")
             continue
+        # Apollo answered (even if with nothing): mark the lead as processed.
+        sets, vals = ["enrich_attempted_at = ?"], [now]
         # Fill ONLY the gaps — never overwrite Outscraper's contact/email.
-        sets, vals = [], []
         if not have_contact and info.get("name"):
             sets += ["contact = ?", "contact_title = ?"]
             vals += [info["name"], info.get("title", "")]
@@ -209,11 +246,12 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
             sets.append("email = ?"); vals.append(info["email"]); emails += 1
         if info.get("direct_phone"):
             sets.append("direct_phone = ?"); vals.append(info["direct_phone"]); phones += 1
-        if sets:
-            vals.append(row["id"])
-            conn.execute(f"UPDATE leads SET {', '.join(sets)} WHERE id = ?", vals)
+        vals.append(row["id"])
+        conn.execute(f"UPDATE leads SET {', '.join(sets)} WHERE id = ?", vals)
+        if len(sets) > 1:
             enriched += 1
     conn.commit()
     return {"checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
+            "skipped_already_attempted": skipped_attempted,
             "org_calls": org_calls, "error": error}

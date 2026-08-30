@@ -315,6 +315,11 @@ LEAD_EXTRA_COLUMNS = {
     "site_last_visit_date": "TEXT",
     "intent_topic": "TEXT NOT NULL DEFAULT ''",
     "intent_last_seen_date": "TEXT",
+    # When Apollo's contact waterfall / org enrichment last RAN for this lead
+    # (set even when Apollo returned nothing), so a partial record — contact but
+    # no email, or an org with no match — is not paid for again on a later run.
+    "enrich_attempted_at": "TEXT",
+    "org_enrich_attempted_at": "TEXT",
     # Company firmographics from Apollo's Organization Enrichment (1 credit/org).
     "employee_count": "INTEGER",
     "company_revenue": "TEXT",
@@ -541,6 +546,11 @@ OFFER_EXTRA_COLUMNS = {
     "enabled": "INTEGER NOT NULL DEFAULT 1",
     # JSON list of review keywords that signal this offer's pain (review_pain_match).
     "pain_keywords": "TEXT NOT NULL DEFAULT '[]'",
+    # Snapshot of what the PRESET last wrote into rules / pain_keywords. A preset
+    # refresh only overwrites a row whose current values still equal this baseline,
+    # so a user's hand-edits in Settings survive a preset-version bump.
+    "preset_rules": "TEXT",
+    "preset_pain_keywords": "TEXT",
 }
 
 # Extra columns on requeue_leads added after first release.
@@ -700,12 +710,14 @@ def _migrate_campaigns_to_offers(conn):
 def _seed_offers(conn):
     import json
     for slug, info in OFFER_PRESETS.items():
+        rules = json.dumps(info["rules"])
+        kws = json.dumps(info.get("pain_keywords", []))
         conn.execute(
             "INSERT OR IGNORE INTO offers (slug, name, audience, goal, rules, is_preset, "
-            "site_check, pain_keywords) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-            (slug, info["name"], info["audience"], info["goal"],
-             json.dumps(info["rules"]), info.get("site_check", 0),
-             json.dumps(info.get("pain_keywords", []))),
+            "site_check, pain_keywords, preset_rules, preset_pain_keywords) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            (slug, info["name"], info["audience"], info["goal"], rules,
+             info.get("site_check", 0), kws, rules, kws),
         )
     _refresh_preset_offers(conn)
 
@@ -715,17 +727,90 @@ def _seed_offers(conn):
 OFFER_PRESET_VERSION = 2
 
 
+def _same_json(a, b):
+    """Compare two JSON blobs by VALUE, so formatting/key-order differences don't
+    read as a user edit. Falls back to raw string comparison if either won't parse."""
+    import json
+    try:
+        return json.loads(a or "null") == json.loads(b or "null")
+    except (TypeError, ValueError):
+        return (a or "") == (b or "")
+
+
+def _backfill_preset_baselines(conn):
+    """Give preset rows created before the baseline columns existed a baseline,
+    but ONLY where the stored value still equals the preset default — those are
+    provably untouched. A row that already diverges keeps a NULL baseline and is
+    never auto-refreshed, since we cannot tell an old preset value from a user
+    edit. Runs on every init (not version-gated), so databases already at the
+    current preset version also start tracking and stay eligible for future bumps."""
+    import json
+    for slug, info in OFFER_PRESETS.items():
+        row = conn.execute(
+            "SELECT rules, pain_keywords, preset_rules, preset_pain_keywords "
+            "FROM offers WHERE slug = ? AND is_preset = 1", (slug,)).fetchone()
+        if row is None:
+            continue
+        if row["preset_rules"] is None and _same_json(row["rules"], json.dumps(info["rules"])):
+            conn.execute("UPDATE offers SET preset_rules = rules WHERE slug = ?", (slug,))
+        kws = json.dumps(info.get("pain_keywords", []))
+        if row["preset_pain_keywords"] is None and _same_json(row["pain_keywords"], kws):
+            conn.execute(
+                "UPDATE offers SET preset_pain_keywords = pain_keywords WHERE slug = ?", (slug,))
+
+
+def _preset_field(current, baseline, preset_default):
+    """Decide one preset-managed field's (new value, new baseline).
+
+    - baseline recorded and still matching -> preset still owns the field: take the
+      new default and move the baseline with it.
+    - baseline recorded but no longer matching -> the user edited it in Settings:
+      keep their value and keep the OLD baseline, so it never matches again and the
+      field stays user-owned through every future version bump.
+    - no baseline (row predates these columns) -> adopt a baseline only when the
+      value is already the preset default; otherwise leave the baseline unset and
+      the value untouched, since we can't tell an old preset value from an edit."""
+    if baseline is not None:
+        if _same_json(current, baseline):
+            return preset_default, preset_default
+        return current, baseline
+    if _same_json(current, preset_default):
+        return current, preset_default
+    return current, None
+
+
 def _refresh_preset_offers(conn):
     """One-time-per-version refresh of preset offers' rules + pain_keywords, so a
-    preset's scoring change reaches databases seeded before it. Only rows with
-    is_preset = 1 are touched."""
+    preset's scoring change reaches databases seeded before it.
+
+    Only rows with is_preset = 1 are touched, and only FIELD BY FIELD while the
+    stored value still equals the preset baseline this code last wrote
+    (preset_rules / preset_pain_keywords). A field the user hand-edited in
+    Settings no longer matches its baseline and is left alone forever after —
+    including on offers whose own preset didn't change in this version bump.
+    Rows predating the baseline columns have no baseline recorded; they are
+    adopted at their current values (treated as user-owned if they already
+    diverge from this version's preset) rather than being blindly overwritten."""
     import json
+    _backfill_preset_baselines(conn)
     if int(get_setting(conn, "offer_preset_version", "0") or 0) >= OFFER_PRESET_VERSION:
         return
     for slug, info in OFFER_PRESETS.items():
+        row = conn.execute(
+            "SELECT rules, pain_keywords, preset_rules, preset_pain_keywords "
+            "FROM offers WHERE slug = ? AND is_preset = 1", (slug,)).fetchone()
+        if row is None:
+            continue
+        new_rules = json.dumps(info["rules"])
+        new_kws = json.dumps(info.get("pain_keywords", []))
+        base_rules = row["preset_rules"]
+        base_kws = row["preset_pain_keywords"]
+        rules, base_rules = _preset_field(row["rules"], base_rules, new_rules)
+        kws, base_kws = _preset_field(row["pain_keywords"], base_kws, new_kws)
         conn.execute(
-            "UPDATE offers SET rules = ?, pain_keywords = ? WHERE slug = ? AND is_preset = 1",
-            (json.dumps(info["rules"]), json.dumps(info.get("pain_keywords", [])), slug),
+            "UPDATE offers SET rules = ?, pain_keywords = ?, preset_rules = ?, "
+            "preset_pain_keywords = ? WHERE slug = ? AND is_preset = 1",
+            (rules, kws, base_rules, base_kws, slug),
         )
     set_setting(conn, "offer_preset_version", str(OFFER_PRESET_VERSION))
 
@@ -882,7 +967,16 @@ def _migrate_cities(conn):
 
 
 def _migrate_leads(conn):
+    """One-time import of the pre-database daily CSVs (leads_YYYY-MM-DD.csv) and
+    the old dedupe DB. Guarded by a settings flag so it runs exactly ONCE per
+    database: the old "leads table is empty" check alone would let the whole
+    migration re-fire on a later restart if the user ever discarded every pull
+    (imported rows can pick up a run_id in _backfill_run_ids and be deleted with
+    it), resurrecting leads that were deliberately removed."""
+    if get_setting(conn, "migrate_leads_v1", "") == "done":
+        return
     if conn.execute("SELECT 1 FROM leads LIMIT 1").fetchone():
+        set_setting(conn, "migrate_leads_v1", "done")
         return
 
     # Old daily CSVs carry the full lead details; import them first.
@@ -935,3 +1029,5 @@ def _migrate_leads(conn):
                 "INSERT OR IGNORE INTO leads (phone, business_name, pulled_date) VALUES (?, ?, ?)",
                 (phone.strip(), (name or "(unknown)").strip(), first_seen or str(date.today())),
             )
+
+    set_setting(conn, "migrate_leads_v1", "done")
