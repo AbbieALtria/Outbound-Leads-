@@ -109,6 +109,20 @@
       <code>/data</code>, matching <code>DATA_DIR</code>. Redeploy, then reload this
       page: the badge turns green only once a restart has actually been survived.</p>
     {% endif %}
+    {% if storage.postgres_error %}
+      <p class="warn"><strong>Postgres was configured but could not be used</strong>, so the
+      app fell back to this container's temporary storage to stay up. The reason:</p>
+      <pre style="white-space:pre-wrap;font-size:12px;overflow-x:auto;">{{ storage.postgres_error }}</pre>
+    {% endif %}
+    {% if storage.selftest %}
+      <table class="mini">
+        {% for name, ok, detail in storage.selftest %}
+        <tr><td>{{ name }}</td>
+          <td>{% if ok %}<span class="badge badge-ok">pass</span>{% else %}
+            <span class="badge badge-hot">fail</span> <code>{{ detail }}</code>{% endif %}</td></tr>
+        {% endfor %}
+      </table>
+    {% endif %}
     {% if storage.write_error %}
       <p><span class="badge badge-hot">read-only</span> {{ storage.write_error }} —
       the app cannot write beside its database.</p>

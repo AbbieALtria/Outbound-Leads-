@@ -27,11 +27,30 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # no code change — and unsetting it is a complete rollback.
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+# Set when Postgres was asked for but could not be used, so the reason is
+# reported in the app instead of only existing in a crashed deploy's log.
+POSTGRES_ERROR = ""
 if POSTGRES:
     import pgbackend
     IntegrityError, DbError = pgbackend.IntegrityError, pgbackend.Error
 else:
     IntegrityError, DbError = sqlite3.IntegrityError, sqlite3.Error
+
+
+def fall_back_to_sqlite(reason):
+    """Abandon Postgres for this process and carry on with the local file.
+
+    Turning DATABASE_URL on should be a safe experiment, not a gamble with the
+    live site: an unusable Postgres would otherwise crash the worker on import
+    and take the app down, which is how the last attempt ended. Storage becomes
+    temporary again — the banner already says so — but the site stays up and
+    the reason is preserved for diagnosis.
+    """
+    global POSTGRES, POSTGRES_ERROR, IntegrityError, DbError
+    POSTGRES, POSTGRES_ERROR = False, reason
+    IntegrityError, DbError = sqlite3.IntegrityError, sqlite3.Error
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"[storage] Postgres unusable, falling back to SQLite: {reason}", flush=True)
 # DB lives in DATA_DIR when set (e.g. a Railway persistent volume like /data),
 # otherwise next to the code for local use. Keeping it configurable is what makes
 # hosted deploys survive redeploys.

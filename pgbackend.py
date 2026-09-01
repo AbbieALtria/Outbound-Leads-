@@ -17,8 +17,15 @@ platform fault entirely rather than waiting on it.
 
 import re
 
+import os
+
 import psycopg
 from psycopg.rows import dict_row
+
+# Seconds to wait for the database before giving up. Long enough for a managed
+# instance that is still waking, short enough that a wrong DSN fails the deploy
+# quickly instead of hanging the worker.
+CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "15"))
 
 # Statement-level rewrites. SQLite's INSERT OR IGNORE is Postgres's ON CONFLICT
 # DO NOTHING; everything else the app writes is already valid in both.
@@ -171,11 +178,18 @@ class Cursor:
 class Connection:
     """sqlite3-shaped wrapper over a psycopg connection."""
 
-    def __init__(self, dsn):
+    def __init__(self, dsn, connect_timeout=CONNECT_TIMEOUT):
         # autocommit mirrors how this app actually behaves -- it commits
         # promptly and never rolls back -- and stops read-only paths that never
         # call commit() from holding a transaction open.
-        self._conn = psycopg.connect(dsn, row_factory=dict_row, autocommit=True)
+        #
+        # connect_timeout matters at boot: without it an unreachable database
+        # hangs the worker instead of failing, and the caller can neither fall
+        # back nor report why. libpq's own parameter, so a DSN that already
+        # sets it wins.
+        self._conn = psycopg.connect(
+            dsn, row_factory=dict_row, autocommit=True,
+            **({} if "connect_timeout" in dsn else {"connect_timeout": connect_timeout}))
 
     def execute(self, sql, params=()):
         cur = self._conn.cursor()

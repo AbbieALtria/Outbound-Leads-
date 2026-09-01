@@ -14,6 +14,7 @@ import os
 import re
 import socket
 import threading
+import traceback
 from datetime import date, datetime, timedelta
 
 from flask import (Flask, g, jsonify, redirect, render_template,
@@ -46,7 +47,17 @@ app.secret_key = (os.environ.get("SECRET_KEY")
 
 # Initialize the database at import time so it works under gunicorn (which never
 # runs the __main__ block below), not only when started via `python app.py`.
-db.init_db()
+try:
+    db.init_db()
+except Exception as _e:                # noqa: BLE001 - the site must still boot
+    if not db.POSTGRES:
+        raise
+    # Postgres was configured but the schema could not be built. Keep the site
+    # up on the local file and record why, rather than crash-looping the worker.
+    traceback.print_exc()
+    db.fall_back_to_sqlite(f"{type(_e).__name__}: {_e}")
+    db.init_db()
+
 # Must happen every boot, before anything can fail, so Settings can report
 # whether this deploy's storage is the same storage the last deploy used.
 BOOT_INFO = db.record_boot()
@@ -957,6 +968,8 @@ def storage_status(conn):
             "app_dir": str(db.SCRIPT_DIR),
             "ident": ident,
             "postgres": db.POSTGRES,
+            "postgres_error": db.POSTGRES_ERROR,
+            "selftest": DB_SELFTEST,
             "configured": bool(os.environ.get("DATA_DIR")),
             # A managed database needs no restart to prove itself — it is not
             # the container's disk, so it cannot go down with the container.
