@@ -879,6 +879,16 @@ def storage_status(conn):
     rather than being rounded up to persistent.
     """
     boots = int(BOOT_INFO.get("boots", 1))
+    # A real mount is a different filesystem from the one holding the code, so
+    # comparing device ids says straight away whether a volume is actually
+    # mounted where DATA_DIR points — no need to wait for a second boot to find
+    # out. Equal ids mean DATA_DIR is just a folder in the container.
+    mounted = None
+    if os.environ.get("DATA_DIR"):
+        try:
+            mounted = db.DATA_DIR.stat().st_dev != db.SCRIPT_DIR.stat().st_dev
+        except OSError:
+            mounted = None
     counts = {}
     for table in ("leads", "pull_runs", "clients", "campaigns", "users"):
         try:
@@ -888,6 +898,7 @@ def storage_status(conn):
     return {"path": str(db.DB_FILE),
             "configured": bool(os.environ.get("DATA_DIR")),
             "proven": boots >= 2,
+            "mounted": mounted,
             "boots": boots,
             "first_boot": BOOT_INFO.get("first_boot", ""),
             "write_error": BOOT_INFO.get("error", ""),

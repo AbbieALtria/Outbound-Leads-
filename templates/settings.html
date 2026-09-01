@@ -78,7 +78,15 @@
       <p><span class="badge badge-hot">not proven</span>
       This database was created on <strong>this</strong> boot, so nothing here has
       survived a restart yet.
-      {% if storage.configured %}
+      {% if storage.configured and storage.mounted == false %}
+        <strong>No volume is mounted at <code>{{ storage.path.rsplit('/', 1)[0] }}</code></strong>
+        — it is on the same filesystem as the application code, so it is just a folder
+        inside the container. If you have already created a volume, its mount path does
+        not match <code>DATA_DIR</code>; line them up and this resolves.
+      {% elif storage.configured and storage.mounted %}
+        A volume <em>is</em> mounted here, which is the hard part — it simply hasn't
+        been through a restart yet. Redeploy once and this should turn green.
+      {% elif storage.configured %}
         <code>DATA_DIR</code> is set, but that alone guarantees nothing: if no volume
         is mounted at that path, the app simply creates the folder inside the
         container and it is discarded on the next deploy.
@@ -101,6 +109,8 @@
     <table class="mini">
       <tr><td>Database file</td><td><code>{{ storage.path }}</code></td></tr>
       <tr><td>Size</td><td>{{ storage.size_kb }} KB</td></tr>
+      <tr><td>Volume mounted here</td>
+        <td>{% if storage.mounted %}yes{% elif storage.mounted == false %}<strong>no</strong>{% else %}n/a{% endif %}</td></tr>
       <tr><td>Boots recorded here</td><td>{{ storage.boots }}</td></tr>
       {% for name, n in storage.counts.items() %}
       <tr><td>{{ name.replace('_', ' ') }}</td><td>{{ n }}</td></tr>
