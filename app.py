@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import threading
 from datetime import date, datetime, timedelta
 
@@ -860,7 +861,27 @@ def settings():
         enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
         enrich_reveal_phone=db.get_setting(conn, "enrich_reveal_phone", "0") == "1",
         api_key_set=bool(pipeline.get_api_key()),
+        storage=storage_status(conn),
     )
+
+
+def storage_status(conn):
+    """Where the database lives and whether it survives a redeploy.
+
+    Without DATA_DIR pointing at a mounted volume the file sits in the container
+    filesystem, so every deploy silently starts from an empty database. That
+    looks identical to "someone deleted the leads", which is exactly the
+    ambiguity this panel exists to remove.
+    """
+    persistent = bool(os.environ.get("DATA_DIR"))
+    counts = {}
+    for table in ("leads", "pull_runs", "clients", "campaigns", "users"):
+        try:
+            counts[table] = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+        except sqlite3.Error:
+            counts[table] = "?"
+    return {"path": str(db.DB_FILE), "persistent": persistent, "counts": counts,
+            "size_kb": round(db.DB_FILE.stat().st_size / 1024) if db.DB_FILE.exists() else 0}
 
 
 def export_filename(conn, args, leads, prefix=""):

@@ -68,6 +68,31 @@
     </div>
   </section>
 
+  <section class="card">
+    <h2>Storage</h2>
+    {% if storage.persistent %}
+      <p><span class="badge badge-ok">persistent</span>
+      Leads survive restarts and deployments.</p>
+    {% else %}
+      <p><span class="badge badge-hot">not persistent</span>
+      <strong>Every deployment wipes this database.</strong> The file sits in the
+      container's own filesystem, which Railway replaces on each deploy. To fix:
+      add a Volume in Railway, mount it at <code>/data</code>, and set the
+      variable <code>DATA_DIR=/data</code>. Export anything you need first —
+      switching moves the app to the empty volume.</p>
+    {% endif %}
+    <table class="mini">
+      <tr><td>Database file</td><td><code>{{ storage.path }}</code></td></tr>
+      <tr><td>Size</td><td>{{ storage.size_kb }} KB</td></tr>
+      {% for name, n in storage.counts.items() %}
+      <tr><td>{{ name.replace('_', ' ') }}</td><td>{{ n }}</td></tr>
+      {% endfor %}
+    </table>
+    <p class="dim small">If leads vanished but pull runs are still listed, they were
+    discarded or deleted in the app. If <em>both</em> are zero, the database itself
+    was replaced.</p>
+  </section>
+
   <section class="card wide">
     <h2>Offers</h2>
     <p class="dim small">An <strong>offer</strong> is the pitch/scoring profile — which signals make a lead

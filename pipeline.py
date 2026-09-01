@@ -575,30 +575,49 @@ MIN_PER_LOCATION = 5
 MAX_SWEEP_PASSES = 4
 
 
-def _order_by_coverage(conn, targets, industry_slugs):
-    """Least-covered location first, so repeat pulls fill the gaps.
+def _plan_locations(conn, targets, industry_slugs):
+    """Decide what order to visit the selected locations in.
 
-    Saved cities already arrive least-recently-pulled first, but locations
-    ticked on the dashboard arrive in the tree's alphabetical order and carry no
-    db_id to timestamp — which is how three straight pulls can all land in
-    whichever city sorts first. Ranking by the leads already held for this
-    industry fixes that, and spreads coverage ACROSS pulls, not just within one.
+    Two rules, both driven by the leads already held for this industry:
+
+    Emptiest first — locations ticked on the dashboard arrive in the tree's
+    alphabetical order and carry no db_id to timestamp, which is how three
+    straight pulls can all land in whichever city sorts first. Ranking by
+    existing coverage spreads leads ACROSS pulls, not just within one.
+
+    Then one region at a time — a pass only visits a handful of locations, so
+    without this "select all of Canada" would spend the whole target inside a
+    single province. Provinces are dealt in turn, emptiest province first, so a
+    pass samples the country and later pulls move on to the untouched regions.
     """
     if len(targets) < 2 or not industry_slugs:
         return targets
     ph = ",".join("?" * len(industry_slugs))
-    counts = {
-        (str(r["city"]).lower(), str(r["state"]).lower()): r["n"]
-        for r in conn.execute(
+    counts, region_counts = {}, {}
+    for r in conn.execute(
             f"SELECT city, state, COUNT(*) AS n FROM leads "
-            f"WHERE industry IN ({ph}) GROUP BY city, state", list(industry_slugs))
-    }
+            f"WHERE industry IN ({ph}) GROUP BY city, state", list(industry_slugs)):
+        state = str(r["state"]).lower()
+        counts[(str(r["city"]).lower(), state)] = r["n"]
+        region_counts[state] = region_counts.get(state, 0) + r["n"]
+
     ordered = sorted(
         enumerate(targets),
         key=lambda it: (counts.get(((it[1]["city"] or "").lower(),
                                     (it[1]["state"] or "").lower()), 0), it[0]),
     )
-    return [t for _, t in ordered]
+    buckets = {}
+    for i, t in ordered:
+        buckets.setdefault((t["state"] or "").lower(), []).append((i, t))
+    queues = [q for _, q in sorted(
+        buckets.items(), key=lambda kv: (region_counts.get(kv[0], 0), kv[1][0][0]))]
+
+    out = []
+    while any(queues):
+        for q in queues:
+            if q:
+                out.append(q.pop(0)[1])
+    return out
 
 
 def run_pull(industry_slugs, target, api_key, location=None, locations=None,
@@ -682,7 +701,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         new_lead_ids = []
         cancelled = False
 
-        targets = _order_by_coverage(conn, targets, industry_slugs)
+        targets = _plan_locations(conn, targets, industry_slugs)
 
         names = "+".join(s for s in industry_slugs)
         log(f"Target: {target} fresh {names} leads across {len(targets)} location(s)")
