@@ -34,7 +34,15 @@
   <main>
     {# The Apollo cost warning lives in the "Enrich contacts" confirmation modal
        (dashboard.html) — shown at the moment of the action, with a live credit
-       estimate — rather than as a banner on every page. #}
+       estimate — rather than as a banner on every page. Storage IS a banner:
+       it invalidates everything done in the session, so it has to be visible
+       before work starts, not at the moment of one action. #}
+    {% if storage_at_risk and current_user %}
+    <p class="warn storage-warn">⚠️ <strong>Leads pulled now will be lost on the next
+      deployment.</strong> The database is not on a mounted volume, so this container's
+      storage is temporary. Export anything you generate straight away —
+      <a href="{{ url_for('settings') }}">details in Settings</a>.</p>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
   <script src="{{ url_for('static', filename='app.js') }}"></script>

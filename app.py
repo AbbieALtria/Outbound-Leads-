@@ -106,10 +106,28 @@ def _fromjson(value):
         return []
 
 
+def storage_at_risk():
+    """True when DATA_DIR names a directory that is not a mounted volume.
+
+    Setting DATA_DIR says the operator intends the database to outlive the
+    container; the directory being on the same filesystem as the code says it
+    won't. Leads pulled in that state are billed for and then thrown away on the
+    next deploy, so this warns on every page rather than only in Settings. Two
+    stat calls, no database work — cheap enough for every request.
+    """
+    if not os.environ.get("DATA_DIR"):
+        return False
+    try:
+        return db.DATA_DIR.stat().st_dev == db.SCRIPT_DIR.stat().st_dev
+    except OSError:
+        return False
+
+
 @app.context_processor
 def inject_user():
     ctx = {"current_user": getattr(g, "user", None), "alert_count": 0,
-           "apollo_enabled": contacts.enabled()}
+           "apollo_enabled": contacts.enabled(),
+           "storage_at_risk": storage_at_risk()}
     # Show the unseen-alert badge in the nav for signed-in users.
     if getattr(g, "user", None):
         try:
