@@ -79,10 +79,13 @@
       This database was created on <strong>this</strong> boot, so nothing here has
       survived a restart yet.
       {% if storage.configured and storage.mounted == false %}
-        <strong>No volume is mounted at <code>{{ storage.path.rsplit('/', 1)[0] }}</code></strong>
-        — it is on the same filesystem as the application code, so it is just a folder
-        inside the container. If you have already created a volume, its mount path does
-        not match <code>DATA_DIR</code>; line them up and this resolves.
+        <code>{{ storage.path.rsplit('/', 1)[0] }}</code> is on the same filesystem as the
+        application code, so <strong>no volume appears to be mounted there</strong> and it
+        is just a folder inside the container. Three things produce this: no volume exists;
+        a volume exists but its mount path doesn't match <code>DATA_DIR</code>; or
+        <strong>the volume was created after the running container started</strong> — a
+        volume only mounts into containers launched after it exists, so a redeploy is
+        needed. Check the mount path first, then redeploy.
       {% elif storage.configured and storage.mounted %}
         A volume <em>is</em> mounted here, which is the hard part — it simply hasn't
         been through a restart yet. Redeploy once and this should turn green.
@@ -108,6 +111,7 @@
     {% endif %}
     <table class="mini">
       <tr><td>Database file</td><td><code>{{ storage.path }}</code></td></tr>
+      <tr><td>Application code</td><td><code>{{ storage.app_dir }}</code></td></tr>
       <tr><td>Size</td><td>{{ storage.size_kb }} KB</td></tr>
       <tr><td>Volume mounted here</td>
         <td>{% if storage.mounted %}yes{% elif storage.mounted == false %}<strong>no</strong>{% else %}n/a{% endif %}</td></tr>

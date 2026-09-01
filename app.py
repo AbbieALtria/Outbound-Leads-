@@ -896,6 +896,7 @@ def storage_status(conn):
         except sqlite3.Error:
             counts[table] = "?"
     return {"path": str(db.DB_FILE),
+            "app_dir": str(db.SCRIPT_DIR),
             "configured": bool(os.environ.get("DATA_DIR")),
             "proven": boots >= 2,
             "mounted": mounted,
