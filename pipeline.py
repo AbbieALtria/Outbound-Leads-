@@ -469,37 +469,136 @@ def _norm_name(name):
     return re.sub(r"\s+", " ", n).strip()
 
 
-def _stamp_location_counts(conn, run_id, rules, log=print):
-    """After a multi-city sweep: group this run's leads by normalized business
-    name; a name at 2+ DISTINCT addresses is a multi-site prospect. Stamp
-    location_count on those leads, then rescore the run's leads so the
-    multi_location signal is reflected in score + hook."""
+# Mail hosts and site builders anyone can sign up for. Two businesses sharing
+# one of these share a vendor, not an owner, so they must never group.
+GENERIC_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.ca", "yahoo.co.uk",
+    "hotmail.com", "hotmail.ca", "outlook.com", "live.com", "live.ca", "msn.com",
+    "aol.com", "icloud.com", "me.com", "mac.com", "protonmail.com", "proton.me",
+    "gmx.com", "zoho.com", "mail.com", "email.com",
+    # Canadian ISP mailboxes — very common for owner-operators
+    "shaw.ca", "telus.net", "rogers.com", "bell.net", "sympatico.ca",
+    "videotron.ca", "cogeco.ca", "eastlink.ca", "xplornet.com",
+    # hosted site builders / directories
+    "wixsite.com", "wix.com", "squarespace.com", "wordpress.com", "weebly.com",
+    "business.site", "godaddysites.com", "myshopify.com", "blogspot.com",
+    "facebook.com", "sites.google.com", "webs.com", "jimdosite.com",
+    "yelp.com", "linktr.ee",
+}
+
+
+def _org_domain(value):
+    """Owning domain from an email address or URL; '' when absent or generic.
+
+    Returning '' for the generic hosts above is the whole point of this helper:
+    a blank key never groups, so two unrelated clinics on gmail stay separate.
+    """
+    v = (value or "").strip().lower()
+    if not v:
+        return ""
+    host = v.rsplit("@", 1)[1] if "@" in v else re.sub(r"^[a-z]+://", "", v)
+    host = re.split(r"[/?#:]", host, 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    if "." not in host or host in GENERIC_DOMAINS:
+        return ""
+    # a subdomain of a builder (mysite.wixsite.com) is just as generic
+    if any(host.endswith("." + g) for g in GENERIC_DOMAINS):
+        return ""
+    return host
+
+
+def _stamp_location_counts(conn, log=print):
+    """Mark multi-site prospects and rescore them.
+
+    Two leads are treated as one organisation when they share a normalized
+    business name OR a non-generic email/website domain. The domain key is what
+    finds corporate groups that brand every site differently — a chain whose
+    Barrie and Airdrie clinics have unrelated names but mail from one domain is
+    invisible to name matching, yet it is exactly the multi-site prospect an
+    ICT offer wants most.
+
+    Grouping spans the whole table rather than one run, so a single-city pull
+    still links up with sites found in earlier pulls. A lead's count is the
+    largest group it belongs to, counted in DISTINCT addresses so duplicate
+    rows can't inflate it.
+    """
     from collections import defaultdict
     rows = conn.execute(
-        "SELECT id, business_name, address FROM leads WHERE run_id = ?", (run_id,)
+        "SELECT id, business_name, address, email, website, location_count FROM leads"
     ).fetchall()
-    addrs, ids = defaultdict(set), defaultdict(list)
+
+    addrs, members = defaultdict(set), defaultdict(list)
     for r in rows:
-        key = _norm_name(r["business_name"])
-        if not key:
-            continue
-        addrs[key].add((r["address"] or "").strip().lower())
-        ids[key].append(r["id"])
-    stamped = 0
-    for key, lead_ids in ids.items():
+        addr = (r["address"] or "").strip().lower()
+        keys = {("name", _norm_name(r["business_name"])),
+                ("dom", _org_domain(r["email"])),
+                ("dom", _org_domain(r["website"]))}
+        for kind, key in keys:
+            if not key:
+                continue
+            addrs[(kind, key)].add(addr)
+            members[(kind, key)].append(r["id"])
+
+    # Largest group each lead sits in wins: a name group of 2 inside a domain
+    # group of 40 is a 40-site organisation.
+    best = defaultdict(lambda: 1)
+    for key, lead_ids in members.items():
         count = len(addrs[key])
-        if count >= 2:
-            conn.execute(
-                f"UPDATE leads SET location_count = ? WHERE id IN ({','.join('?' * len(lead_ids))})",
-                [count, *lead_ids])
-            stamped += len(lead_ids)
-    if stamped:
-        conn.commit()
-        scoring._rescore_rows(conn, conn.execute(
-            "SELECT * FROM leads WHERE run_id = ?", (run_id,)), rules)
-        conn.commit()
-        log(f"  multi-location: {stamped} lead(s) marked multi-site, rescored")
-    return stamped
+        for lid in lead_ids:
+            if count > best[lid]:
+                best[lid] = count
+
+    changed = [r["id"] for r in rows
+               if best[r["id"]] != (r["location_count"] or 1)]
+    if not changed:
+        return 0
+    for lid in changed:
+        conn.execute("UPDATE leads SET location_count = ? WHERE id = ?", (best[lid], lid))
+    conn.commit()
+    # Each lead rescores under its OWN campaign's offer — the group can reach
+    # across campaigns, so this run's rules don't apply to all of them.
+    scoring.rescore_leads(conn, changed)
+    multi = sum(1 for lid in changed if best[lid] >= 2)
+    log(f"  multi-location: {multi} lead(s) marked multi-site "
+        f"({len(changed)} rescored)")
+    return multi
+
+
+# Sweep rationing. A pass hands each participating location a share of what is
+# still missing instead of letting the first one drain the whole target. The
+# floor exists because a tiny query is poor value — Outscraper's fixed overhead
+# per request doesn't shrink with the limit — so rather than asking ten cities
+# for two leads each, a pass asks fewer cities for a worthwhile chunk and the
+# next pass moves on to the others.
+MIN_PER_LOCATION = 5
+MAX_SWEEP_PASSES = 4
+
+
+def _order_by_coverage(conn, targets, industry_slugs):
+    """Least-covered location first, so repeat pulls fill the gaps.
+
+    Saved cities already arrive least-recently-pulled first, but locations
+    ticked on the dashboard arrive in the tree's alphabetical order and carry no
+    db_id to timestamp — which is how three straight pulls can all land in
+    whichever city sorts first. Ranking by the leads already held for this
+    industry fixes that, and spreads coverage ACROSS pulls, not just within one.
+    """
+    if len(targets) < 2 or not industry_slugs:
+        return targets
+    ph = ",".join("?" * len(industry_slugs))
+    counts = {
+        (str(r["city"]).lower(), str(r["state"]).lower()): r["n"]
+        for r in conn.execute(
+            f"SELECT city, state, COUNT(*) AS n FROM leads "
+            f"WHERE industry IN ({ph}) GROUP BY city, state", list(industry_slugs))
+    }
+    ordered = sorted(
+        enumerate(targets),
+        key=lambda it: (counts.get(((it[1]["city"] or "").lower(),
+                                    (it[1]["state"] or "").lower()), 0), it[0]),
+    )
+    return [t for _, t in ordered]
 
 
 def run_pull(industry_slugs, target, api_key, location=None, locations=None,
@@ -583,151 +682,201 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         new_lead_ids = []
         cancelled = False
 
+        targets = _order_by_coverage(conn, targets, industry_slugs)
+
         names = "+".join(s for s in industry_slugs)
         log(f"Target: {target} fresh {names} leads across {len(targets)} location(s)")
 
-        for target_loc in targets:
+        # Interleaved sweep. Each pass spreads what's still missing over as many
+        # locations as MIN_PER_LOCATION allows, so a 20-lead target across eight
+        # cities comes back as a spread instead of 20 from whichever city sorts
+        # first. Locations that return nothing new drop out; passes repeat until
+        # the target is met, everyone is tapped out, or the cap is reached.
+        exhausted, tried = set(), set()
+        for sweep_pass in range(MAX_SWEEP_PASSES):
             if added_total >= target or _is_cancelled(conn, run_id):
                 cancelled = _is_cancelled(conn, run_id)
                 break
+            live = [t for t in targets if t["label"] not in exhausted]
+            if not live:
+                log("  no location has fresh leads left for this industry")
+                break
 
-            city_label = target_loc["label"]
+            remaining_pass = target - added_total
+            share = max(MIN_PER_LOCATION, -(-remaining_pass // len(live)))
+            # A location never asked yet is likelier to hold fresh businesses
+            # than one we've already drawn from, so it goes first. Without this
+            # the cap below keeps re-picking the head of the list and later
+            # locations never get a turn.
+            live.sort(key=lambda t: t["label"] in tried)
+            # Asking more locations than the remainder supports just buys
+            # records we'll throw away, so cap participation instead.
+            live = live[:max(1, -(-remaining_pass // share))]
+            if sweep_pass:
+                log(f"  pass {sweep_pass + 1}: {remaining_pass} still needed, "
+                    f"{len(live)} location(s) this pass")
 
-            for industry, chain_names in industries:
-                if added_total >= target:
+            for target_loc in live:
+                if added_total >= target or _is_cancelled(conn, run_id):
+                    cancelled = _is_cancelled(conn, run_id)
                     break
-                if _is_cancelled(conn, run_id):
-                    cancelled = True
-                    break
 
-                slug = industry["slug"]
-                progress_label = (
-                    f"{city_label} ({slug})" if len(industries) > 1 else city_label
-                )
-                _update_run(conn, run_id, current_city=progress_label, added=added_total)
+                city_label = target_loc["label"]
+                added_before_loc = added_total
+                tried.add(city_label)
+                # Set false by any query that came back full; a short answer
+                # means the source had nothing more to give.
+                loc_drained, loc_errored = True, False
 
-                remaining = target - added_total
-                pull_limit = max(5, int(remaining * buffer_multiplier))
-                query_text = industry["query_template"].format(
-                    industry=slug.replace("_", " "), city=city_label
-                )
-                log(f"Querying: '{query_text}' (up to {pull_limit})")
-
-                try:
-                    places = []
-                    if source in ("maps", "both"):
-                        places += query_outscraper(api_key, query_text, pull_limit,
-                                                   enrich_contacts=enrich)
-                    if source in ("nppes", "both") and nppes.supports(slug):
-                        # Free US provider registry. No website/reviews — those
-                        # signals just don't fire for these leads.
-                        places += nppes.query_nppes(
-                            slug, city=target_loc["city"],
-                            state=abbrev_state_code(target_loc["state"]),
-                            limit=pull_limit)
-                except RuntimeError as e:
-                    query_errors += 1
-                    last_error = str(e)
-                    log(f"  WARNING: {e}")
-                    continue
-
-                added_this_query = 0
-                places_seen += len(places)
-                for place in places:
+                for industry, chain_names in industries:
                     if added_total >= target:
                         break
+                    if added_total - added_before_loc >= share:
+                        break  # this location has given its share for this pass
+                    if _is_cancelled(conn, run_id):
+                        cancelled = True
+                        break
 
-                    name = (place.get("name") or place.get("title") or "").strip()
-                    phone = (place.get("phone") or place.get("phone_number") or "").strip()
-
-                    # NPPES occasionally has no phone. Rather than drop the lead,
-                    # keep it under a unique NPI-based key and mark the phone
-                    # invalid — dialable_leads() already excludes phone_valid=0,
-                    # so it can't reach VICIdial until a number is found.
-                    needs_phone = False
-                    if not phone and place.get("npi"):
-                        phone = f"NPI-{place['npi']}"
-                        needs_phone = True
-                    if not name or not phone:
-                        continue
-                    if is_chain(name, chain_names):
-                        continue
-                    biz_status = (place.get("business_status") or "").upper()
-                    if "PERMANENTLY" in biz_status:
-                        continue  # dead business -> guaranteed non-connect
-
-                    address = place.get("full_address") or place.get("address") or ""
-                    website = place.get("site") or place.get("website") or ""
-                    reviews = _as_int(place.get("reviews") or place.get("reviews_count"))
-                    rating = _as_float(place.get("rating"))
-                    # Outscraper: verified=False => "Claim this business" (unclaimed).
-                    verified = place.get("verified")
-                    unclaimed = 1 if verified is False else (0 if verified is True else None)
-                    email = extract_email(place)
-
-                    # Score via the active campaign, off the neutral signals.
-                    # location_count is 1 here (single-location assumption); a
-                    # post-sweep grouping pass fixes multi-site businesses + rescores.
-                    signal_lead = {
-                        "website": website, "email": email, "reviews": reviews,
-                        "rating": rating, "unclaimed": unclaimed, "location_count": 1,
-                        "city": place.get("city") or target_loc["city"],
-                        "state": place.get("state") or place.get("region") or target_loc["state"],
-                    }
-                    score, hook = scoring.evaluate(signal_lead, rules)
-
-                    cur = conn.execute(
-                        "INSERT OR IGNORE INTO leads (phone, business_name, address, city, state, "
-                        "website, category, industry, score, call_hook, pulled_date, "
-                        "email, contact, postcode, search_query, run_id, campaign_id, phone_valid, "
-                        "reviews, rating, unclaimed, street_address, maps_url, "
-                        "country, facebook, business_status) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            phone, name, address,
-                            place.get("city") or target_loc["city"],
-                            place.get("state") or place.get("region") or target_loc["state"],
-                            website,
-                            place.get("type") or place.get("category") or slug,
-                            slug, score, hook, today,
-                            email,
-                            extract_contact(place),
-                            extract_postcode(place, address),
-                            query_text, run_id, campaign_id,
-                            0 if needs_phone else 1,
-                            reviews, rating, unclaimed,
-                            place.get("street") or "",
-                            place.get("location_link") or place.get("url") or "",
-                            place.get("country") or target_loc["country"],
-                            place.get("facebook") or "",
-                            biz_status,
-                        ),
+                    slug = industry["slug"]
+                    progress_label = (
+                        f"{city_label} ({slug})" if len(industries) > 1 else city_label
                     )
-                    if cur.rowcount:  # 0 when the phone was already seen (dedupe)
-                        added_total += 1
-                        added_this_query += 1
-                        new_lead_ids.append(cur.lastrowid)
+                    _update_run(conn, run_id, current_city=progress_label, added=added_total)
 
+                    remaining = min(share - (added_total - added_before_loc),
+                                    target - added_total)
+                    pull_limit = max(MIN_PER_LOCATION, int(remaining * buffer_multiplier))
+                    query_text = industry["query_template"].format(
+                        industry=slug.replace("_", " "), city=city_label
+                    )
+                    log(f"Querying: '{query_text}' (up to {pull_limit})")
+
+                    try:
+                        places = []
+                        if source in ("maps", "both"):
+                            places += query_outscraper(api_key, query_text, pull_limit,
+                                                       enrich_contacts=enrich)
+                        if source in ("nppes", "both") and nppes.supports(slug):
+                            # Free US provider registry. No website/reviews — those
+                            # signals just don't fire for these leads.
+                            places += nppes.query_nppes(
+                                slug, city=target_loc["city"],
+                                state=abbrev_state_code(target_loc["state"]),
+                                limit=pull_limit)
+                    except RuntimeError as e:
+                        query_errors += 1
+                        last_error = str(e)
+                        loc_errored = True
+                        log(f"  WARNING: {e}")
+                        continue
+
+                    if len(places) >= pull_limit:
+                        loc_drained = False
+
+                    added_this_query = 0
+                    places_seen += len(places)
+                    for place in places:
+                        if added_total >= target:
+                            break
+
+                        name = (place.get("name") or place.get("title") or "").strip()
+                        phone = (place.get("phone") or place.get("phone_number") or "").strip()
+
+                        # NPPES occasionally has no phone. Rather than drop the lead,
+                        # keep it under a unique NPI-based key and mark the phone
+                        # invalid — dialable_leads() already excludes phone_valid=0,
+                        # so it can't reach VICIdial until a number is found.
+                        needs_phone = False
+                        if not phone and place.get("npi"):
+                            phone = f"NPI-{place['npi']}"
+                            needs_phone = True
+                        if not name or not phone:
+                            continue
+                        if is_chain(name, chain_names):
+                            continue
+                        biz_status = (place.get("business_status") or "").upper()
+                        if "PERMANENTLY" in biz_status:
+                            continue  # dead business -> guaranteed non-connect
+
+                        address = place.get("full_address") or place.get("address") or ""
+                        website = place.get("site") or place.get("website") or ""
+                        reviews = _as_int(place.get("reviews") or place.get("reviews_count"))
+                        rating = _as_float(place.get("rating"))
+                        # Outscraper: verified=False => "Claim this business" (unclaimed).
+                        verified = place.get("verified")
+                        unclaimed = 1 if verified is False else (0 if verified is True else None)
+                        email = extract_email(place)
+
+                        # Score via the active campaign, off the neutral signals.
+                        # location_count is 1 here (single-location assumption); a
+                        # post-sweep grouping pass fixes multi-site businesses + rescores.
+                        signal_lead = {
+                            "website": website, "email": email, "reviews": reviews,
+                            "rating": rating, "unclaimed": unclaimed, "location_count": 1,
+                            "city": place.get("city") or target_loc["city"],
+                            "state": place.get("state") or place.get("region") or target_loc["state"],
+                        }
+                        score, hook = scoring.evaluate(signal_lead, rules)
+
+                        cur = conn.execute(
+                            "INSERT OR IGNORE INTO leads (phone, business_name, address, city, state, "
+                            "website, category, industry, score, call_hook, pulled_date, "
+                            "email, contact, postcode, search_query, run_id, campaign_id, phone_valid, "
+                            "reviews, rating, unclaimed, street_address, maps_url, "
+                            "country, facebook, business_status) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                phone, name, address,
+                                place.get("city") or target_loc["city"],
+                                place.get("state") or place.get("region") or target_loc["state"],
+                                website,
+                                place.get("type") or place.get("category") or slug,
+                                slug, score, hook, today,
+                                email,
+                                extract_contact(place),
+                                extract_postcode(place, address),
+                                query_text, run_id, campaign_id,
+                                0 if needs_phone else 1,
+                                reviews, rating, unclaimed,
+                                place.get("street") or "",
+                                place.get("location_link") or place.get("url") or "",
+                                place.get("country") or target_loc["country"],
+                                place.get("facebook") or "",
+                                biz_status,
+                            ),
+                        )
+                        if cur.rowcount:  # 0 when the phone was already seen (dedupe)
+                            added_total += 1
+                            added_this_query += 1
+                            new_lead_ids.append(cur.lastrowid)
+
+                    conn.commit()
+                    _update_run(conn, run_id, added=added_total)
+                    log(f"  -> {added_this_query} new qualified leads ({slug}, {city_label})")
+                    time.sleep(1)  # be polite to the API between calls
+
+                # Stop paying to re-ask a location with nothing left: either it
+                # answered short (the source is out of matches) or a full answer
+                # was all duplicates we already hold. A failed query proves
+                # neither, so an errored location stays in the rotation.
+                if not loc_errored and (loc_drained or added_total == added_before_loc):
+                    exhausted.add(city_label)
+
+                if target_loc["db_id"] is not None:
+                    conn.execute(
+                        "UPDATE cities SET last_pulled_at = ? WHERE id = ?",
+                        (db.now_iso(), target_loc["db_id"]),
+                    )
                 conn.commit()
-                _update_run(conn, run_id, added=added_total)
-                log(f"  -> {added_this_query} new qualified leads ({slug}, {city_label})")
-                time.sleep(1)  # be polite to the API between calls
-
-            if target_loc["db_id"] is not None:
-                conn.execute(
-                    "UPDATE cities SET last_pulled_at = ? WHERE id = ?",
-                    (db.now_iso(), target_loc["db_id"]),
-                )
-            conn.commit()
 
         if added_total == 0 and query_errors > 0:
             raise RuntimeError(f"All {query_errors} queries failed. Last error: {last_error}")
 
-        # Multi-location scoring pass: across a multi-city sweep, mark businesses
-        # found at 2+ addresses as multi-site and rescore. Single-location pulls
-        # (one target) keep location_count = 1, so nothing to do.
-        if len(targets) >= 2 and new_lead_ids and run_id is not None:
-            _stamp_location_counts(conn, run_id, rules, log=log)
+        # Multi-location scoring pass. Runs on every pull, not just multi-city
+        # sweeps: domain grouping links these leads to sites found in earlier
+        # runs, so even a one-city pull can expose a chain.
+        if new_lead_ids:
+            _stamp_location_counts(conn, log=log)
 
         # Suppress any freshly-pulled number already on the DNC list.
         blocked = dnc.scrub_leads(conn, new_lead_ids)
