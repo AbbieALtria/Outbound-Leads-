@@ -63,6 +63,53 @@ def translate(sql):
     return "".join(out)
 
 
+def split_statements(script):
+    """Split a SQL script on statement boundaries.
+
+    Naive splitting on ';' breaks on the schema this app actually has: it holds
+    line comments like "-- 10-digit, normalized", and a semicolon inside a
+    comment or a string literal is not a boundary.
+    """
+    out, buf = [], []
+    in_string = in_line_comment = in_block_comment = False
+    i, n = 0, len(script)
+    while i < n:
+        ch, nxt = script[i], script[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                buf.append(ch)
+        elif in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment = False
+                i += 1
+        elif in_string:
+            buf.append(ch)
+            if ch == "'":
+                in_string = False
+        elif ch == "-" and nxt == "-":
+            in_line_comment = True
+            i += 1
+        elif ch == "/" and nxt == "*":
+            in_block_comment = True
+            i += 1
+        elif ch == "'":
+            in_string = True
+            buf.append(ch)
+        elif ch == ";":
+            statement = "".join(buf).strip()
+            if statement:
+                out.append(statement)
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
 def prepare(sql):
     """Full statement rewrite, including the ON CONFLICT tail for INSERT OR IGNORE."""
     had_or_ignore = bool(_OR_IGNORE.match(sql))
@@ -139,6 +186,17 @@ class Connection:
         cur = self._conn.cursor()
         cur.executemany(prepare(sql), [tuple(p) for p in seq])
         return Cursor(cur)
+
+    def executescript(self, script):
+        """Run a multi-statement script, as sqlite3 does.
+
+        psycopg will not take several statements with one execute(), so the
+        script is split and each statement translated on its own — which also
+        gives each CREATE TABLE its own type rewriting.
+        """
+        for statement in split_statements(script):
+            self.execute(statement)
+        return self
 
     def commit(self):
         if not self._conn.autocommit:
