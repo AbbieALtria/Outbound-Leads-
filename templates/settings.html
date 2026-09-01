@@ -87,11 +87,12 @@
         container's own filesystem and every deploy starts empty.
       {% endif %}
       </p>
-      <p class="dim small"><strong>To fix on Railway:</strong> project → the service →
-      <em>Variables</em> tab → <em>+ New Volume</em> → set the mount path to
-      <code>/data</code> → redeploy. Then set <code>DATA_DIR=/data</code> if it isn't
-      already. Reload this page after the deploy: the badge turns green only once a
-      restart has actually been survived.</p>
+      <p class="dim small"><strong>To fix on Railway:</strong> open the project, select
+      this service, and attach a <em>Volume</em> to it — either from the service's
+      Settings under <em>Volumes</em>, or by right-clicking the service on the project
+      canvas and choosing <em>Attach Volume</em>. Set its mount path to
+      <code>/data</code>, matching <code>DATA_DIR</code>. Redeploy, then reload this
+      page: the badge turns green only once a restart has actually been survived.</p>
     {% endif %}
     {% if storage.write_error %}
       <p><span class="badge badge-hot">read-only</span> {{ storage.write_error }} —
