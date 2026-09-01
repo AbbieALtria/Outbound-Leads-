@@ -140,9 +140,14 @@
       <tr><td>{{ name.replace('_', ' ') }}</td><td>{{ n }}</td></tr>
       {% endfor %}
     </table>
+    {% if storage.postgres %}
+    <p class="dim small">If leads vanished, they were discarded or deleted in the app —
+    a managed database cannot lose them to a deploy.</p>
+    {% else %}
     <p class="dim small">If leads vanished but pull runs are still listed, they were
     discarded or deleted in the app. If <em>both</em> are zero and the boot count is
     back to 1, the storage was replaced.</p>
+    {% endif %}
     <details>
       <summary class="dim small" style="cursor:pointer;">Which container is answering?</summary>
       <table class="mini">
