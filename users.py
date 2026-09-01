@@ -11,7 +11,6 @@ with none of those set, the app stays open (no login) for convenience.
 """
 
 import os
-import sqlite3
 from datetime import date
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -95,7 +94,7 @@ def create_user(conn, username, password, role, created_by):
         conn.commit()
         return True, conn.execute(
             "SELECT id FROM users WHERE username = ?", (username,)).fetchone()["id"]
-    except sqlite3.IntegrityError:
+    except db.IntegrityError:
         return False, f"User '{username}' already exists."
 
 

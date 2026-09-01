@@ -21,6 +21,17 @@ from datetime import date, datetime
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Postgres when DATABASE_URL is set, SQLite otherwise. Railway injects
+# DATABASE_URL when a Postgres service is linked, so this switches backend with
+# no code change — and unsetting it is a complete rollback.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+if POSTGRES:
+    import pgbackend
+    IntegrityError, DbError = pgbackend.IntegrityError, pgbackend.Error
+else:
+    IntegrityError, DbError = sqlite3.IntegrityError, sqlite3.Error
 # DB lives in DATA_DIR when set (e.g. a Railway persistent volume like /data),
 # otherwise next to the code for local use. Keeping it configurable is what makes
 # hosted deploys survive redeploys.
@@ -55,7 +66,11 @@ def _await_mount(target, timeout=None):
     return False
 
 
-if os.environ.get("DATA_DIR"):
+if POSTGRES:
+    # Nothing is stored on disk, so there is no volume to wait for.
+    _MOUNT_READY = True
+    print("[storage] Postgres — no volume required", flush=True)
+elif os.environ.get("DATA_DIR"):
     _MOUNT_READY = _await_mount(DATA_DIR)
     print(f"[storage] {DATA_DIR}: "
           + ("volume mounted" if _MOUNT_READY else
@@ -630,6 +645,10 @@ MARKET_TYPES = ["b2b", "b2c", "hybrid"]
 
 
 def connect(db_path=DB_FILE):
+    if POSTGRES:
+        # db_path is meaningless for a networked database; ignored so every
+        # existing call site keeps working unchanged.
+        return pgbackend.connect(DATABASE_URL)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -637,6 +656,19 @@ def connect(db_path=DB_FILE):
     # threaded server + background pull can contend on the single SQLite file).
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
+
+
+def table_columns(conn, table):
+    """Column names of `table`, whichever backend is in use."""
+    if POSTGRES:
+        return pgbackend.table_columns(conn, table)
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def table_names(conn):
+    if POSTGRES:
+        return pgbackend.table_names(conn)
+    return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 
 def now_iso():
@@ -762,7 +794,7 @@ def init_db(db_path=DB_FILE):
 
 
 def _ensure_columns(conn, table, columns):
-    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    existing = table_columns(conn, table)
     for col, ddl in columns.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
@@ -773,11 +805,10 @@ def _migrate_campaigns_to_offers(conn):
     held OFFERS (scoring profiles). Rename it to `offers` so the name `campaigns`
     is free for the new client-engagement table. Only fires when an old-shape
     campaigns table exists (has a `rules` column) and `offers` doesn't yet."""
-    tables = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = table_names(conn)
     if "offers" in tables or "campaigns" not in tables:
         return
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(campaigns)")}
+    cols = table_columns(conn, "campaigns")
     if "rules" in cols:                       # old offer shape -> rename in place
         conn.execute("ALTER TABLE campaigns RENAME TO offers")
 

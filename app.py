@@ -13,7 +13,6 @@ import json
 import os
 import re
 import socket
-import sqlite3
 import threading
 from datetime import date, datetime, timedelta
 
@@ -52,6 +51,21 @@ db.init_db()
 # whether this deploy's storage is the same storage the last deploy used.
 BOOT_INFO = db.record_boot()
 _seed_conn = db.connect()
+
+# Prove the Postgres compatibility layer against the live database rather than
+# trusting that it translates correctly. Cheap, and a broken assumption shows up
+# here in the deploy log instead of as a mangled pull hours later.
+DB_SELFTEST = []
+if db.POSTGRES:
+    import pgbackend
+    DB_SELFTEST = pgbackend.selftest(_seed_conn)
+    for _name, _ok, _detail in DB_SELFTEST:
+        print(f"[db-selftest] {'PASS' if _ok else 'FAIL'}  {_name}"
+              + (f"  -- {_detail}" if _detail else ""), flush=True)
+    _failed = [n for n, ok_, _ in DB_SELFTEST if not ok_]
+    print(f"[db-selftest] {'ALL PASS' if not _failed else 'FAILURES: ' + ', '.join(_failed)}",
+          flush=True)
+
 users.ensure_admin(_seed_conn)
 
 # Bump when scoring/hook logic changes, so stored score+call_hook are refreshed
@@ -115,8 +129,8 @@ def storage_at_risk():
     next deploy, so this warns on every page rather than only in Settings. Two
     stat calls, no database work — cheap enough for every request.
     """
-    if not os.environ.get("DATA_DIR"):
-        return False
+    if db.POSTGRES or not os.environ.get("DATA_DIR"):
+        return False        # a networked database has no volume to lose
     try:
         return db.DATA_DIR.stat().st_dev == db.SCRIPT_DIR.stat().st_dev
     except OSError:
@@ -903,7 +917,7 @@ def storage_status(conn):
     # mounted where DATA_DIR points — no need to wait for a second boot to find
     # out. Equal ids mean DATA_DIR is just a folder in the container.
     mounted = None
-    if os.environ.get("DATA_DIR"):
+    if not db.POSTGRES and os.environ.get("DATA_DIR"):
         try:
             mounted = db.DATA_DIR.stat().st_dev != db.SCRIPT_DIR.stat().st_dev
         except OSError:
@@ -912,7 +926,7 @@ def storage_status(conn):
     for table in ("leads", "pull_runs", "clients", "campaigns", "users"):
         try:
             counts[table] = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
-        except sqlite3.Error:
+        except db.DbError:
             counts[table] = "?"
     # Which container is answering. The Railway Console can be a different
     # container from the one serving traffic, and when it is, a volume can look
@@ -936,11 +950,14 @@ def storage_status(conn):
     except OSError:
         pass
 
-    return {"path": str(db.DB_FILE),
+    return {"path": "Postgres (managed service)" if db.POSTGRES else str(db.DB_FILE),
             "app_dir": str(db.SCRIPT_DIR),
             "ident": ident,
+            "postgres": db.POSTGRES,
             "configured": bool(os.environ.get("DATA_DIR")),
-            "proven": boots >= 2,
+            # A managed database needs no restart to prove itself — it is not
+            # the container's disk, so it cannot go down with the container.
+            "proven": db.POSTGRES or boots >= 2,
             "mounted": mounted,
             "boots": boots,
             "first_boot": BOOT_INFO.get("first_boot", ""),

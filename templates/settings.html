@@ -70,7 +70,11 @@
 
   <section class="card">
     <h2>Storage</h2>
-    {% if storage.proven %}
+    {% if storage.postgres %}
+      <p><span class="badge badge-ok">persistent</span>
+      Managed Postgres — the database is a separate service, so it does not live
+      or die with this container. Nothing to mount, nothing to lose on deploy.</p>
+    {% elif storage.proven %}
       <p><span class="badge badge-ok">persistent</span>
       Confirmed — this database has survived {{ storage.boots - 1 }}
       restart{{ 's' if storage.boots != 2 }} since {{ storage.first_boot[:10] }}.</p>
@@ -110,12 +114,14 @@
       the app cannot write beside its database.</p>
     {% endif %}
     <table class="mini">
-      <tr><td>Database file</td><td><code>{{ storage.path }}</code></td></tr>
+      <tr><td>Database</td><td><code>{{ storage.path }}</code></td></tr>
+      {% if not storage.postgres %}
       <tr><td>Application code</td><td><code>{{ storage.app_dir }}</code></td></tr>
       <tr><td>Size</td><td>{{ storage.size_kb }} KB</td></tr>
       <tr><td>Volume mounted here</td>
         <td>{% if storage.mounted %}yes{% elif storage.mounted == false %}<strong>no</strong>{% else %}n/a{% endif %}</td></tr>
       <tr><td>Boots recorded here</td><td>{{ storage.boots }}</td></tr>
+      {% endif %}
       {% for name, n in storage.counts.items() %}
       <tr><td>{{ name.replace('_', ' ') }}</td><td>{{ n }}</td></tr>
       {% endfor %}
