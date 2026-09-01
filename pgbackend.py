@@ -260,9 +260,13 @@ def selftest(conn):
         except Exception as e:                    # noqa: BLE001 - reported, not raised
             results.append((name, False, f"{type(e).__name__}: {e}"))
 
-    conn.execute(f"DROP TABLE IF EXISTS {t}")
-    conn.execute(f"CREATE TABLE IF NOT EXISTS {t} ("
-                 "id INTEGER PRIMARY KEY, phone TEXT UNIQUE, hook TEXT, n INTEGER)")
+    try:
+        conn.execute(f"DROP TABLE IF EXISTS {t}")
+        conn.execute(f"CREATE TABLE IF NOT EXISTS {t} ("
+                     "id INTEGER PRIMARY KEY, phone TEXT UNIQUE, hook TEXT, n INTEGER)")
+    except Exception as e:                        # noqa: BLE001
+        # A diagnostic must never be the reason the app won't boot.
+        return [("selftest setup", False, f"{type(e).__name__}: {e}")]
 
     state = {}
 
@@ -312,6 +316,9 @@ def selftest(conn):
                      ("schema introspection", missing_column_is_detectable)):
         record(name, fn)
 
-    conn.execute(f"DROP TABLE IF EXISTS {t}")
-    conn.commit()
+    try:
+        conn.execute(f"DROP TABLE IF EXISTS {t}")
+        conn.commit()
+    except Exception as e:                        # noqa: BLE001
+        results.append(("selftest cleanup", False, f"{type(e).__name__}: {e}"))
     return results

@@ -58,7 +58,10 @@ _seed_conn = db.connect()
 DB_SELFTEST = []
 if db.POSTGRES:
     import pgbackend
-    DB_SELFTEST = pgbackend.selftest(_seed_conn)
+    try:
+        DB_SELFTEST = pgbackend.selftest(_seed_conn)
+    except Exception as _e:            # noqa: BLE001 - never block boot on a diagnostic
+        DB_SELFTEST = [("selftest", False, f"{type(_e).__name__}: {_e}")]
     for _name, _ok, _detail in DB_SELFTEST:
         print(f"[db-selftest] {'PASS' if _ok else 'FAIL'}  {_name}"
               + (f"  -- {_detail}" if _detail else ""), flush=True)
