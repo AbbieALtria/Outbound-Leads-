@@ -161,6 +161,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
     checked = enriched = emails = phones = skipped = org_calls = site_hits = 0
     error = ""
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
+    apollo_blocked = False  # set on 401/403 — key/plan can't use the API
     for row in lead_rows:
         website = (row["website"] if "website" in row.keys() else "") or ""
         if not website:
@@ -170,7 +171,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
         # and never re-fetched for a lead that already has them.
         have_org = ("employee_count" in row.keys()) and row["employee_count"] is not None
         dom = "" if have_org else domain_of(website)
-        if dom and dom not in org_cache:
+        if dom and not apollo_blocked and dom not in org_cache:
             try:
                 org_cache[dom] = enrich_organization(website)
                 org_calls += 1
@@ -209,7 +210,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
         #   - revealing a direct dial         -> Apollo may add one (8 credits)
         # Otherwise (e.g. the website already gave us the name and reveals are off)
         # the call could return nothing useful, so skip it entirely.
-        needs_apollo = ((not have_contact)
+        needs_apollo = (not apollo_blocked) and ((not have_contact)
                         or (reveal_email and not have_email)
                         or reveal_phone)
         if not needs_apollo:
@@ -226,6 +227,11 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
             if not error:
                 error = str(e)
             log(f"  enrich failed for lead {row['id']}: {e}")
+            # An auth/permission failure is not per-lead — it will repeat for every
+            # remaining lead, so stop calling Apollo and let the free website tier
+            # carry the rest of the batch.
+            if any(code in str(e) for code in ("401", "403")):
+                apollo_blocked = True
             continue
         # Fill ONLY the gaps — never overwrite Outscraper's contact/email.
         sets, vals = [], []

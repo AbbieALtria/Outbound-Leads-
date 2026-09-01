@@ -518,9 +518,14 @@ if (enrichBtn) {
       enrichBtn.textContent = "Enrich contacts";
       const r = s.last || {};
       if (r.error) {
+        // The free website tier is independent of Apollo, so report what it found
+        // even when Apollo failed — otherwise a key/plan problem hides real wins.
         eresult.className = "pull-result err";
-        eresult.textContent = "Apollo error: " + r.error;
-        return;   // don't reload — keep the error visible
+        eresult.textContent =
+          `Found ${r.site_hits || 0} decision-makers free from company websites. ` +
+          `Apollo unavailable: ${r.error}`;
+        if (r.site_hits) setTimeout(() => location.reload(), 2500);
+        return;
       }
       eresult.className = "pull-result ok";
       eresult.textContent =
