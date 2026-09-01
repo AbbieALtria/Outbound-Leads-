@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -24,6 +25,44 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # otherwise next to the code for local use. Keeping it configurable is what makes
 # hosted deploys survive redeploys.
 DATA_DIR = Path(os.environ.get("DATA_DIR") or SCRIPT_DIR)
+
+
+def _await_mount(target, timeout=None):
+    """Wait for `target` to become a real mount point before using it.
+
+    Railway logs "Mounting volume on: ..." in the same second gunicorn starts,
+    and the process can win that race: it resolves the path, creates the
+    directory itself, and ends up writing to container-local storage that the
+    next deploy discards -- while a shell opened later sees a perfectly healthy
+    volume. A mount is a different device from the filesystem holding the code,
+    so poll for that rather than guessing at a fixed sleep.
+
+    Bounded, and skipped entirely when DATA_DIR is unset (a local run, where the
+    database is meant to live beside the code). Giving up is not fatal: the app
+    still starts, and the Settings banner reports that storage is temporary.
+    """
+    if target == SCRIPT_DIR:
+        return False
+    timeout = float(os.environ.get("VOLUME_WAIT_SECONDS", timeout if timeout is not None else 25))
+    deadline, base = time.monotonic() + timeout, SCRIPT_DIR.stat().st_dev
+    while time.monotonic() < deadline:
+        try:
+            if target.stat().st_dev != base:
+                return True
+        except OSError:
+            pass          # not there yet — the mount can create it
+        time.sleep(0.5)
+    return False
+
+
+if os.environ.get("DATA_DIR"):
+    _MOUNT_READY = _await_mount(DATA_DIR)
+    print(f"[storage] {DATA_DIR}: "
+          + ("volume mounted" if _MOUNT_READY else
+             "NO VOLUME after waiting — data here is temporary"), flush=True)
+else:
+    _MOUNT_READY = False
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_FILE = DATA_DIR / "leads.db"
 # Beside the database, and only useful if it outlives a deploy — see record_boot.
