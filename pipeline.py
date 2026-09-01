@@ -127,14 +127,31 @@ ROLE_ACCOUNTS = {
 }
 
 
+# Role words that show up as ONE PART of a compound local-part —
+# privacy.officer@, front.desk@, new.patients@. ROLE_ACCOUNTS only matches a
+# whole local-part, so "privacy.officer" passed it and reached an agent as a
+# person called "Privacy Officer".
+ROLE_WORDS = ROLE_ACCOUNTS | {
+    "officer", "privacy", "reception", "receptionist", "frontdesk", "front",
+    "desk", "enquiries", "inquiries", "booking", "bookings", "reservations",
+    "patient", "patients", "practice", "clinic", "dental", "care", "emergency",
+    "emergencies", "hello", "enquiry", "inquiry",
+}
+
+
 def name_from_email(email):
     """Derive a plausible person name from an email local-part, or '' if it looks
-    like a role inbox (info@, sales@, ...) rather than a person."""
+    like a role inbox (info@, privacy.officer@, ...) rather than a person."""
     local = email.split("@", 1)[0].lower()
     local = re.sub(r"\d+", "", local)  # drop trailing digits like john12
     if local in ROLE_ACCOUNTS or not local:
         return ""
     parts = [p for p in re.split(r"[._-]+", local) if p]
+    # A role word anywhere in the local-part means the inbox is a function, not
+    # a person -- worth losing a genuine "john.officer" to avoid handing an
+    # agent a name that makes the call sound automated.
+    if any(p in ROLE_WORDS for p in parts):
+        return ""
     # first.last -> "First Last"; single short token isn't reliably a name
     if len(parts) >= 2 and all(p.isalpha() and len(p) > 1 for p in parts[:2]):
         return " ".join(p.capitalize() for p in parts[:2])
