@@ -12,6 +12,7 @@ left in place untouched.
 """
 
 import csv
+import json
 import os
 import re
 import sqlite3
@@ -25,6 +26,32 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("DATA_DIR") or SCRIPT_DIR)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_FILE = DATA_DIR / "leads.db"
+# Beside the database, and only useful if it outlives a deploy — see record_boot.
+BOOT_FILE = DATA_DIR / ".boots.json"
+
+
+def record_boot():
+    """Count boots in a file next to the database, so persistence can be PROVEN.
+
+    That DATA_DIR is set proves nothing. The mkdir above happily creates the
+    directory inside the container when no volume is mounted there, and the
+    result is indistinguishable from real storage — writes succeed, the path
+    looks right — until the next deploy throws the whole thing away. A counter
+    that survives a restart is the only honest evidence, so a boot count still
+    stuck at 1 after a redeploy means the storage is ephemeral.
+    """
+    info = {"first_boot": now_iso(), "boots": 0}
+    try:
+        if BOOT_FILE.exists():
+            stored = json.loads(BOOT_FILE.read_text())
+            if isinstance(stored, dict):
+                info.update(stored)
+        info["boots"] = int(info.get("boots", 0)) + 1
+        info["last_boot"] = now_iso()
+        BOOT_FILE.write_text(json.dumps(info))
+    except (OSError, ValueError, TypeError):
+        info["error"] = "could not write to the data directory"
+    return info
 
 # Old-format files, imported once if present
 OLD_SEEN_DB = SCRIPT_DIR / "seen_leads.sqlite3"

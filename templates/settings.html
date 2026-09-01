@@ -70,27 +70,44 @@
 
   <section class="card">
     <h2>Storage</h2>
-    {% if storage.persistent %}
+    {% if storage.proven %}
       <p><span class="badge badge-ok">persistent</span>
-      Leads survive restarts and deployments.</p>
+      Confirmed — this database has survived {{ storage.boots - 1 }}
+      restart{{ 's' if storage.boots != 2 }} since {{ storage.first_boot[:10] }}.</p>
     {% else %}
-      <p><span class="badge badge-hot">not persistent</span>
-      <strong>Every deployment wipes this database.</strong> The file sits in the
-      container's own filesystem, which Railway replaces on each deploy. To fix:
-      add a Volume in Railway, mount it at <code>/data</code>, and set the
-      variable <code>DATA_DIR=/data</code>. Export anything you need first —
-      switching moves the app to the empty volume.</p>
+      <p><span class="badge badge-hot">not proven</span>
+      This database was created on <strong>this</strong> boot, so nothing here has
+      survived a restart yet.
+      {% if storage.configured %}
+        <code>DATA_DIR</code> is set, but that alone guarantees nothing: if no volume
+        is mounted at that path, the app simply creates the folder inside the
+        container and it is discarded on the next deploy.
+      {% else %}
+        <code>DATA_DIR</code> is not set, so the file sits next to the code in the
+        container's own filesystem and every deploy starts empty.
+      {% endif %}
+      </p>
+      <p class="dim small"><strong>To fix on Railway:</strong> project → the service →
+      <em>Variables</em> tab → <em>+ New Volume</em> → set the mount path to
+      <code>/data</code> → redeploy. Then set <code>DATA_DIR=/data</code> if it isn't
+      already. Reload this page after the deploy: the badge turns green only once a
+      restart has actually been survived.</p>
+    {% endif %}
+    {% if storage.write_error %}
+      <p><span class="badge badge-hot">read-only</span> {{ storage.write_error }} —
+      the app cannot write beside its database.</p>
     {% endif %}
     <table class="mini">
       <tr><td>Database file</td><td><code>{{ storage.path }}</code></td></tr>
       <tr><td>Size</td><td>{{ storage.size_kb }} KB</td></tr>
+      <tr><td>Boots recorded here</td><td>{{ storage.boots }}</td></tr>
       {% for name, n in storage.counts.items() %}
       <tr><td>{{ name.replace('_', ' ') }}</td><td>{{ n }}</td></tr>
       {% endfor %}
     </table>
     <p class="dim small">If leads vanished but pull runs are still listed, they were
-    discarded or deleted in the app. If <em>both</em> are zero, the database itself
-    was replaced.</p>
+    discarded or deleted in the app. If <em>both</em> are zero and the boot count is
+    back to 1, the storage was replaced.</p>
   </section>
 
   <section class="card wide">

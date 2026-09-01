@@ -47,6 +47,9 @@ app.secret_key = (os.environ.get("SECRET_KEY")
 # Initialize the database at import time so it works under gunicorn (which never
 # runs the __main__ block below), not only when started via `python app.py`.
 db.init_db()
+# Must happen every boot, before anything can fail, so Settings can report
+# whether this deploy's storage is the same storage the last deploy used.
+BOOT_INFO = db.record_boot()
 _seed_conn = db.connect()
 users.ensure_admin(_seed_conn)
 
@@ -866,21 +869,29 @@ def settings():
 
 
 def storage_status(conn):
-    """Where the database lives and whether it survives a redeploy.
+    """Where the database lives, and whether it has been PROVEN to survive.
 
-    Without DATA_DIR pointing at a mounted volume the file sits in the container
-    filesystem, so every deploy silently starts from an empty database. That
-    looks identical to "someone deleted the leads", which is exactly the
-    ambiguity this panel exists to remove.
+    An earlier version of this called storage persistent whenever DATA_DIR was
+    set, and was wrong: with no volume mounted there the directory is just
+    created inside the container, so writes succeed and the path looks correct
+    right up until the deploy that discards it. Only a boot counter that
+    outlives a restart is evidence, so "unproven" is reported as its own state
+    rather than being rounded up to persistent.
     """
-    persistent = bool(os.environ.get("DATA_DIR"))
+    boots = int(BOOT_INFO.get("boots", 1))
     counts = {}
     for table in ("leads", "pull_runs", "clients", "campaigns", "users"):
         try:
             counts[table] = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
         except sqlite3.Error:
             counts[table] = "?"
-    return {"path": str(db.DB_FILE), "persistent": persistent, "counts": counts,
+    return {"path": str(db.DB_FILE),
+            "configured": bool(os.environ.get("DATA_DIR")),
+            "proven": boots >= 2,
+            "boots": boots,
+            "first_boot": BOOT_INFO.get("first_boot", ""),
+            "write_error": BOOT_INFO.get("error", ""),
+            "counts": counts,
             "size_kb": round(db.DB_FILE.stat().st_size / 1024) if db.DB_FILE.exists() else 0}
 
 
