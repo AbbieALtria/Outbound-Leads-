@@ -18,6 +18,8 @@ import re
 
 import requests
 
+import site_contacts
+
 SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search"
 MATCH_URL = "https://api.apollo.io/api/v1/people/match"
 # Organization Enrichment. NOTE: per Apollo's docs this costs 1 CREDIT PER
@@ -152,10 +154,11 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
       - if only one is missing -> call Apollo but write ONLY the missing field(s),
         never overwriting what Outscraper already found (a paid reveal for an
         email/contact we already have is wasted).
-    Returns {checked, enriched, emails, phones, skipped_already_enriched, error}
+    Returns {checked, enriched, emails, phones, skipped_already_enriched,
+    org_calls, site_hits, error}
     where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
     avoided."""
-    checked = enriched = emails = phones = skipped = org_calls = 0
+    checked = enriched = emails = phones = skipped = org_calls = site_hits = 0
     error = ""
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     for row in lead_rows:
@@ -184,8 +187,32 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
                  org.get("industry", ""), row["id"]))
         have_contact = bool(((row["contact"] if "contact" in row.keys() else "") or "").strip())
         have_email = bool(((row["email"] if "email" in row.keys() else "") or "").strip())
-        # Waterfall: Outscraper already got both -> don't spend an Apollo call.
-        if have_contact and have_email:
+
+        # TIER 0 (free): the business's own website. Local operators aren't in any
+        # LinkedIn-derived database, but their About/Team page names them. Costs
+        # nothing, so it runs before any paid provider and often removes the need
+        # for one entirely.
+        if not have_contact:
+            try:
+                found = site_contacts.find_team_contact(website)
+            except Exception:
+                found = {}
+            if found.get("name"):
+                conn.execute(
+                    "UPDATE leads SET contact = ?, contact_title = ? WHERE id = ?",
+                    (found["name"], found.get("title", ""), row["id"]))
+                have_contact = True
+                site_hits += 1
+        # Waterfall gate: only call Apollo if it can still ADD something.
+        #   - no contact yet                  -> Apollo may find one (search is free)
+        #   - email missing AND revealing     -> Apollo may unlock it (1 credit)
+        #   - revealing a direct dial         -> Apollo may add one (8 credits)
+        # Otherwise (e.g. the website already gave us the name and reveals are off)
+        # the call could return nothing useful, so skip it entirely.
+        needs_apollo = ((not have_contact)
+                        or (reveal_email and not have_email)
+                        or reveal_phone)
+        if not needs_apollo:
             skipped += 1
             continue
         checked += 1
@@ -216,4 +243,4 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
     conn.commit()
     return {"checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
-            "org_calls": org_calls, "error": error}
+            "org_calls": org_calls, "site_hits": site_hits, "error": error}
