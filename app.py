@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import socket
 import sqlite3
 import threading
 from datetime import date, datetime, timedelta
@@ -895,8 +896,26 @@ def storage_status(conn):
             counts[table] = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
         except sqlite3.Error:
             counts[table] = "?"
+    # Which container is answering. The Railway Console can be a different
+    # container from the one serving traffic, and when it is, a volume can look
+    # mounted in the shell while the web process never sees it — so identify the
+    # process rather than reasoning about what "the" container has.
+    ident = {
+        "host": socket.gethostname(),
+        "service": os.environ.get("RAILWAY_SERVICE_NAME", ""),
+        "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", ""),
+        "deployment": (os.environ.get("RAILWAY_DEPLOYMENT_ID", "") or "")[:8],
+        "data_dir": os.environ.get("DATA_DIR", "(unset)"),
+    }
+    try:
+        ident["data_dev"] = db.DATA_DIR.stat().st_dev
+        ident["app_dev"] = db.SCRIPT_DIR.stat().st_dev
+    except OSError:
+        pass
+
     return {"path": str(db.DB_FILE),
             "app_dir": str(db.SCRIPT_DIR),
+            "ident": ident,
             "configured": bool(os.environ.get("DATA_DIR")),
             "proven": boots >= 2,
             "mounted": mounted,

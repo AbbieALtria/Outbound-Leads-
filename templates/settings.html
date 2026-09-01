@@ -123,6 +123,18 @@
     <p class="dim small">If leads vanished but pull runs are still listed, they were
     discarded or deleted in the app. If <em>both</em> are zero and the boot count is
     back to 1, the storage was replaced.</p>
+    <details>
+      <summary class="dim small" style="cursor:pointer;">Which container is answering?</summary>
+      <table class="mini">
+        {% for k, v in storage.ident.items() %}
+        <tr><td>{{ k.replace('_', ' ') }}</td><td><code>{{ v }}</code></td></tr>
+        {% endfor %}
+      </table>
+      <p class="dim small">Compare these with <code>hostname</code> and
+      <code>env | grep RAILWAY_</code> in the platform's console. If they differ, the
+      shell you are inspecting is not the container serving this page, and what it
+      shows about mounts says nothing about where the app actually writes.</p>
+    </details>
   </section>
 
   <section class="card wide">
