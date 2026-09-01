@@ -70,6 +70,18 @@ def translate(sql):
     return "".join(out)
 
 
+_INSERT_TARGET = re.compile(r"^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+_HAS_RETURNING = re.compile(r"\bRETURNING\b", re.IGNORECASE)
+
+
+def _insert_target(sql):
+    """Table an INSERT writes to, or '' when the statement isn't a plain INSERT."""
+    if _HAS_RETURNING.search(sql):
+        return ""
+    m = _INSERT_TARGET.match(sql)
+    return m.group(1).lower() if m else ""
+
+
 def split_statements(script):
     """Split a SQL script on statement boundaries.
 
@@ -132,8 +144,9 @@ def prepare(sql):
 class Cursor:
     """The parts of a sqlite3 cursor this app uses, backed by psycopg."""
 
-    def __init__(self, cur):
+    def __init__(self, cur, lastrowid=None):
         self._cur = cur
+        self._lastrowid = lastrowid
 
     def fetchone(self):
         return self._cur.fetchone()
@@ -154,22 +167,15 @@ class Cursor:
 
     @property
     def lastrowid(self):
-        """Id of the row just inserted.
+        """Id of the row this cursor inserted, captured when it was inserted.
 
-        lastval() reads the sequence this session last advanced, which avoids
-        appending RETURNING to every INSERT -- several tables here key on a text
-        column and have no id at all. Callers already guard on rowcount, so it
-        is never read after an insert that did nothing.
+        It has to be eager. Callers read it after running further statements --
+        the industry seeder reads it once per chain row it inserts -- so asking
+        the database "what was the last id?" at read time answers about the
+        wrong table. Captured via RETURNING at execute time, and None when the
+        insert was ignored, which is what a conflicting INSERT OR IGNORE means.
         """
-        try:
-            with self._cur.connection.cursor() as c:
-                c.execute("SELECT lastval()")
-                row = c.fetchone()
-                if not row:
-                    return None
-                return list(row.values())[0] if isinstance(row, dict) else row[0]
-        except psycopg.Error:
-            return None
+        return self._lastrowid
 
     def close(self):
         self._cur.close()
@@ -190,10 +196,24 @@ class Connection:
         self._conn = psycopg.connect(
             dsn, row_factory=dict_row, autocommit=True,
             **({} if "connect_timeout" in dsn else {"connect_timeout": connect_timeout}))
+        # Tables with no `id` column, learned the first time RETURNING id fails.
+        self._no_id = set()
 
     def execute(self, sql, params=()):
+        q = prepare(sql)
+        table = _insert_target(q)
+        if table and table not in self._no_id:
+            try:
+                cur = self._conn.cursor()
+                cur.execute(q + " RETURNING id", tuple(params))
+                row = cur.fetchone() if cur.rowcount else None
+                return Cursor(cur, lastrowid=row["id"] if row else None)
+            except psycopg.errors.UndefinedColumn:
+                # Keyed on something other than an id (settings, dnc_numbers).
+                # Remember, so the failed attempt happens once per connection.
+                self._no_id.add(table)
         cur = self._conn.cursor()
-        cur.execute(prepare(sql), tuple(params))
+        cur.execute(q, tuple(params))
         return Cursor(cur)
 
     def executemany(self, sql, seq):
@@ -321,11 +341,40 @@ def selftest(conn):
         assert "hook" in table_columns(conn, t), "table_columns lost a column"
         assert t in table_names(conn), "table_names lost the table"
 
+    def lastrowid_survives_other_inserts():
+        """The seeder's pattern: hold a parent's id while inserting children.
+
+        The id must belong to the cursor that did the parent insert, not to
+        whatever the connection wrote most recently -- reading it lazily
+        returned the child table's id and broke the foreign key.
+        """
+        child = f"{t}_child"
+        conn.execute(f"DROP TABLE IF EXISTS {child}")
+        conn.execute(f"CREATE TABLE IF NOT EXISTS {child} ("
+                     f"id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL "
+                     f"REFERENCES {t}(id), tag TEXT)")
+        cur = conn.execute(f"INSERT OR IGNORE INTO {t} (phone, hook, n) VALUES (?, ?, ?)",
+                           ("15550002", "parent", 1))
+        parent = cur.lastrowid
+        for tag in ("a", "b", "c"):
+            conn.execute(f"INSERT INTO {child} (parent_id, tag) VALUES (?, ?)",
+                         (cur.lastrowid, tag))
+        stored = {r["parent_id"] for r in conn.execute(f"SELECT parent_id FROM {child}")}
+        assert stored == {parent}, f"parent id drifted to {stored}, expected {{{parent}}}"
+        conn.execute(f"DROP TABLE IF EXISTS {child}")
+
+    def ignored_insert_has_no_id():
+        cur = conn.execute(f"INSERT OR IGNORE INTO {t} (phone, hook, n) VALUES (?, ?, ?)",
+                           ("15550002", "dup", 1))
+        assert cur.rowcount == 0, f"rowcount {cur.rowcount}"
+
     for name, fn in (("insert returns an id", insert_returns_id),
                      ("duplicate is ignored", dedupe_is_silent),
                      ("rows read by column name", rows_read_by_name),
                      ("literal % in LIKE", literal_percent_survives),
                      ("update reports rowcount", update_reports_rowcount),
+                     ("id survives other inserts", lastrowid_survives_other_inserts),
+                     ("ignored insert reports 0", ignored_insert_has_no_id),
                      ("executemany", executemany_works),
                      ("schema introspection", missing_column_is_detectable)):
         record(name, fn)
