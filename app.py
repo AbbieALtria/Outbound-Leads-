@@ -924,6 +924,11 @@ def storage_status(conn):
         "environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", ""),
         "deployment": (os.environ.get("RAILWAY_DEPLOYMENT_ID", "") or "")[:8],
         "data_dir": os.environ.get("DATA_DIR", "(unset)"),
+        # Present in a container the platform attached the volume to. Absent
+        # here while the console shows it is the clearest statement that the
+        # web process was never given the volume in the first place.
+        "volume_name": os.environ.get("RAILWAY_VOLUME_NAME", "(not in this container)"),
+        "volume_mount": os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "(not in this container)"),
     }
     try:
         ident["data_dev"] = db.DATA_DIR.stat().st_dev
