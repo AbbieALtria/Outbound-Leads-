@@ -141,6 +141,34 @@ def name_from_email(email):
     return ""
 
 
+# Words that are trades/entity types, never surnames. Outscraper sometimes returns
+# these as a "last name" (e.g. "Stacey Dentist" for stacey@barriedentist.ca).
+NOT_SURNAMES = {
+    "dentist", "dental", "dentistry", "clinic", "clinics", "medical", "health",
+    "healthcare", "care", "vet", "veterinary", "optical", "optometry", "pharmacy",
+    "physio", "physiotherapy", "chiropractic", "law", "legal", "realty", "insurance",
+    "group", "centre", "center", "services", "service", "solutions", "systems",
+    "company", "associates", "partners", "practice", "office", "hotel", "motel",
+    "spa", "salon", "auto", "hvac", "plumbing", "roofing", "electric", "electrical",
+    "inc", "llc", "ltd", "corp", "co", "team", "staff", "admin", "reception",
+}
+
+
+def _plausible_person(name, place):
+    """Reject a 'name' whose surname is a trade or entity word rather than a real
+    surname. A wrong name on an agent's screen is worse than no name — they'd ask
+    for "Stacey Dentist" and lose credibility instantly."""
+    parts = [p for p in re.split(r"\s+", (name or "").strip()) if p]
+    if len(parts) < 2:
+        return False
+    surname = parts[-1].lower().strip(".,")
+    if surname in NOT_SURNAMES or len(surname) < 3:
+        return False
+    # A surname that IS the business name is usually genuine (John Smith at
+    # smithdental.ca), so only the trade-word check above rejects.
+    return True
+
+
 def extract_contact(place):
     """Best decision-maker guess as 'Name (Title)'. Outscraper's Maps data rarely
     carries a real person here, so this is best-effort: prefer a named contact
@@ -159,7 +187,8 @@ def extract_contact(place):
             return f"{name} ({title})"
     if candidates:
         name, title = candidates[0]
-        return f"{name} ({title})" if title else name
+        if _plausible_person(name, place):
+            return f"{name} ({title})" if title else name
     # Fall back to a name inferred from the primary email address.
     inferred = name_from_email(extract_email(place))
     return f"{inferred} (from email)" if inferred else ""
@@ -534,7 +563,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                         "state": r["state"], "country": "", "db_id": r["id"]}
                        for r in rows]
 
-        buffer_multiplier = float(db.get_setting(conn, "buffer_multiplier", "2.0"))
+        buffer_multiplier = float(db.get_setting(conn, "buffer_multiplier", "1.4"))
         enrich = db.get_setting(conn, "contact_enrichment", "1") == "1"
         validate = db.get_setting(conn, "phone_validation", "0") == "1"
         review_signals = db.get_setting(conn, "review_signals", "0") == "1"
@@ -548,6 +577,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         rules = scoring.load_rules(offer)
         today = str(date.today())
         added_total = 0
+        places_seen = 0      # records Outscraper billed us for
         query_errors = 0
         last_error = ""
         new_lead_ids = []
@@ -577,7 +607,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                 _update_run(conn, run_id, current_city=progress_label, added=added_total)
 
                 remaining = target - added_total
-                pull_limit = max(20, int(remaining * buffer_multiplier))
+                pull_limit = max(5, int(remaining * buffer_multiplier))
                 query_text = industry["query_template"].format(
                     industry=slug.replace("_", " "), city=city_label
                 )
@@ -602,6 +632,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     continue
 
                 added_this_query = 0
+                places_seen += len(places)
                 for place in places:
                     if added_total >= target:
                         break
@@ -738,6 +769,10 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
             message = f"Added {added_total} fresh leads{validation_note}"
             if added_total < target:
                 message += f" (target was {target} -- add more cities to hit it)"
+        if places_seen:
+            keep = round(100.0 * added_total / places_seen)
+            message += (f" | {added_total} kept of {places_seen} records fetched "
+                        f"({keep}% keep-rate)")
             status = "done"
         _update_run(conn, run_id, status=status, finished_at=db.now_iso(),
                     added=added_total, current_city="", message=message)

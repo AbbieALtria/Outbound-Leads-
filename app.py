@@ -785,6 +785,9 @@ def dashboard():
     # The offer drives goal/audience-dependent UI (appointment button, B2C labels);
     # it's the selected campaign's offer, or the default offer when none is chosen.
     active_campaign = db.offer_for_campaign(conn, selected_campaign)
+    # Computed once — this runs COUNT queries, so calling it per template
+    # argument doubled the work on every dashboard load.
+    _discard_state = pull_run_discardable(conn, run_id)
     return render_template(
         "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
         out_of_hours=(out_of_hours_count(conn, {"run_id": run_id}) if run_id else 0),
@@ -795,8 +798,7 @@ def dashboard():
         campaigns=campaigns, active_campaign=active_campaign,
         selected_campaign=selected_campaign,
         quota=quota, restrict_campaigns=restrict_campaigns,
-        can_discard=pull_run_discardable(conn, run_id)[0],
-        discard_reason=pull_run_discardable(conn, run_id)[1],
+        can_discard=_discard_state[0], discard_reason=_discard_state[1],
         default_industry=db.get_setting(conn, "default_industry", "hvac"),
         default_target=db.get_setting(conn, "target_leads_per_day", "100"),
         countries=COUNTRIES, states_by_country=STATES_BY_COUNTRY,
@@ -852,6 +854,7 @@ def settings():
         contact_enrichment=db.get_setting(conn, "contact_enrichment", "1") == "1",
         phone_validation=db.get_setting(conn, "phone_validation", "0") == "1",
         review_signals=db.get_setting(conn, "review_signals", "0") == "1",
+        buffer_multiplier=db.get_setting(conn, "buffer_multiplier", "1.4"),
         drop_voip_export=db.get_setting(conn, "drop_voip_export", "0") == "1",
         apollo_enabled=contacts.enabled(),
         enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
@@ -2130,6 +2133,11 @@ def save_general_settings():
                    "1" if request.form.get("phone_validation") else "0")
     db.set_setting(conn, "review_signals",
                    "1" if request.form.get("review_signals") else "0")
+    try:
+        buf = float(request.form.get("buffer_multiplier", "1.4"))
+        db.set_setting(conn, "buffer_multiplier", str(max(1.0, min(3.0, buf))))
+    except ValueError:
+        pass
     db.set_setting(conn, "drop_voip_export",
                    "1" if request.form.get("drop_voip_export") else "0")
     db.set_setting(conn, "enrich_reveal_email",

@@ -258,7 +258,10 @@ DEFAULT_SETTINGS = {
     # pull for a new campaign doesn't burn credits before anyone checks quality;
     # the user can type a larger number for any pull.
     "target_leads_per_day": "20",
-    "buffer_multiplier": "2.0",
+    # Extra records fetched per lead wanted. Outscraper bills per record
+    # RETURNED, so 2.0 meant paying for ~2x what we keep. Tunable in Settings;
+    # each pull reports its keep-rate so this can be lowered with evidence.
+    "buffer_multiplier": "1.4",
     "default_industry": "hvac",
     # Ask Outscraper for emails + contact people (decision-makers). Costs extra
     # Outscraper credits per lead; turn off in Settings if not worth it.
@@ -533,6 +536,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_campaigns_vici ON campaigns(vici_campaign_id);
+
 """
 
 # Extra columns on offers (the old campaigns table) added after its first release.
@@ -651,9 +655,24 @@ def init_db(db_path=DB_FILE):
     _ensure_columns(conn, "requeue_leads", REQUEUE_EXTRA_COLUMNS)
     _ensure_columns(conn, "clients", CLIENT_EXTRA_COLUMNS)
     _ensure_columns(conn, "users", USER_EXTRA_COLUMNS)
+    # Indexes on the hot filter columns. Created AFTER _ensure_columns because
+    # run_id/campaign_id are migration-added, not part of the base schema.
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_leads_run ON leads(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_campaign ON leads(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_runs_campaign ON pull_runs(campaign_id)",
+    ):
+        conn.execute(ddl)
 
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    # One-time: lower the old 2.0 fetch buffer, which billed for ~2x the leads
+    # kept. Runs once; a value the user has since chosen is left alone.
+    if get_setting(conn, "buffer_default_v2", "") != "done":
+        if get_setting(conn, "buffer_multiplier", "") == "2.0":
+            set_setting(conn, "buffer_multiplier", "1.4")
+        set_setting(conn, "buffer_default_v2", "done")
 
     _seed_industries(conn)
     _seed_offers(conn)
