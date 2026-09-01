@@ -503,6 +503,13 @@ const enrichBtn = document.getElementById("enrich-btn");
 if (enrichBtn) {
   const eresult = document.getElementById("enrich-result");
 
+  // Hits alone don't say whether the free tier is working — "1 found" is a
+  // triumph out of 2 and a failure out of 16. Report the rate it was measured
+  // over, so the number that decides whether a paid provider is needed is the
+  // one on screen.
+  const siteRate = (r) =>
+    r.site_tried ? ` (${Math.round((100 * (r.site_hits || 0)) / r.site_tried)}%)` : "";
+
   const pollEnrich = async () => {
     let s;
     try {
@@ -522,7 +529,8 @@ if (enrichBtn) {
         // even when Apollo failed — otherwise a key/plan problem hides real wins.
         eresult.className = "pull-result err";
         eresult.textContent =
-          `Found ${r.site_hits || 0} decision-makers free from company websites. ` +
+          `Found ${r.site_hits || 0} of ${r.site_tried || 0} decision-makers free from ` +
+          `company websites${siteRate(r)}. ` +
           `Apollo unavailable: ${r.error}`;
         if (r.site_hits) setTimeout(() => location.reload(), 2500);
         return;

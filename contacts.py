@@ -155,10 +155,11 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
         never overwriting what Outscraper already found (a paid reveal for an
         email/contact we already have is wasted).
     Returns {checked, enriched, emails, phones, skipped_already_enriched,
-    org_calls, site_hits, error}
+    org_calls, site_hits, site_tried, error}
     where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
     avoided."""
     checked = enriched = emails = phones = skipped = org_calls = site_hits = 0
+    site_tried = 0     # leads the free website tier could actually attempt
     error = ""
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     apollo_blocked = False  # set on 401/403 — key/plan can't use the API
@@ -193,7 +194,12 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
         # LinkedIn-derived database, but their About/Team page names them. Costs
         # nothing, so it runs before any paid provider and often removes the need
         # for one entirely.
-        if not have_contact:
+        if not have_contact and website:
+            # Counted separately from `checked`: the hit rate that decides
+            # whether a paid provider is needed at all is hits over the leads
+            # this tier could actually attempt — one with no website, or a name
+            # already known, is neither a success nor a failure for it.
+            site_tried += 1
             try:
                 found = site_contacts.find_team_contact(website)
             except Exception:
@@ -249,4 +255,5 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
     conn.commit()
     return {"checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
-            "org_calls": org_calls, "site_hits": site_hits, "error": error}
+            "org_calls": org_calls, "site_hits": site_hits,
+            "site_tried": site_tried, "error": error}
