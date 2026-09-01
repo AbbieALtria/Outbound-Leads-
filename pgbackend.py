@@ -74,12 +74,32 @@ _INSERT_TARGET = re.compile(r"^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)", re.
 _HAS_RETURNING = re.compile(r"\bRETURNING\b", re.IGNORECASE)
 
 
+_INSERT_COLUMNS = re.compile(
+    r"^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", re.IGNORECASE)
+
+
 def _insert_target(sql):
     """Table an INSERT writes to, or '' when the statement isn't a plain INSERT."""
     if _HAS_RETURNING.search(sql):
         return ""
     m = _INSERT_TARGET.match(sql)
     return m.group(1).lower() if m else ""
+
+
+def _explicit_id_target(sql):
+    """Table whose INSERT supplies its own id, so its sequence needs resyncing.
+
+    SQLite's rowid counter follows an explicitly inserted id; a Postgres
+    sequence does not. Seeding a fixed row (clients id 1) therefore leaves the
+    sequence at zero, and the next generated id collides with the row just
+    written -- which is not a seeding bug so much as a difference that only
+    shows up later, on whatever insert happens to come next.
+    """
+    m = _INSERT_COLUMNS.match(sql)
+    if not m:
+        return ""
+    cols = [c.strip().strip('"').lower() for c in m.group(2).split(",")]
+    return m.group(1).lower() if "id" in cols else ""
 
 
 def split_statements(script):
@@ -199,14 +219,26 @@ class Connection:
         # Tables with no `id` column, learned the first time RETURNING id fails.
         self._no_id = set()
 
+    def _resync_sequence(self, table):
+        """Move a table's id sequence past any explicitly inserted ids."""
+        try:
+            self._conn.execute(
+                "SELECT setval(pg_get_serial_sequence(%s, 'id'), "
+                f"COALESCE((SELECT MAX(id) FROM {table}), 1), true)", (table,))
+        except psycopg.Error:
+            pass          # no serial sequence on this table; nothing to resync
+
     def execute(self, sql, params=()):
         q = prepare(sql)
+        explicit_id = _explicit_id_target(q)
         table = _insert_target(q)
         if table and table not in self._no_id:
             try:
                 cur = self._conn.cursor()
                 cur.execute(q + " RETURNING id", tuple(params))
                 row = cur.fetchone() if cur.rowcount else None
+                if explicit_id:
+                    self._resync_sequence(explicit_id)
                 return Cursor(cur, lastrowid=row["id"] if row else None)
             except psycopg.errors.UndefinedColumn:
                 # Keyed on something other than an id (settings, dnc_numbers).
@@ -214,6 +246,8 @@ class Connection:
                 self._no_id.add(table)
         cur = self._conn.cursor()
         cur.execute(q, tuple(params))
+        if explicit_id:
+            self._resync_sequence(explicit_id)
         return Cursor(cur)
 
     def executemany(self, sql, seq):
@@ -363,6 +397,23 @@ def selftest(conn):
         assert stored == {parent}, f"parent id drifted to {stored}, expected {{{parent}}}"
         conn.execute(f"DROP TABLE IF EXISTS {child}")
 
+    def explicit_id_does_not_block_the_next():
+        """Seeding a fixed id must not collide with the next generated one.
+
+        SQLite's rowid counter follows an explicit id; a Postgres sequence does
+        not, so without a resync the next insert reuses it -- which surfaced as
+        clients_pkey "Key (id)=(1) already exists" on a database whose only sin
+        was having a seeded house row.
+        """
+        fixed = f"{t}_fixed"
+        conn.execute(f"DROP TABLE IF EXISTS {fixed}")
+        conn.execute(f"CREATE TABLE IF NOT EXISTS {fixed} (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute(f"INSERT OR IGNORE INTO {fixed} (id, name) VALUES (?, ?)", (1, "house"))
+        cur = conn.execute(f"INSERT INTO {fixed} (name) VALUES (?)", ("next",))
+        assert cur.rowcount == 1, "generated id collided with the seeded one"
+        assert cur.lastrowid != 1, f"reused the seeded id ({cur.lastrowid})"
+        conn.execute(f"DROP TABLE IF EXISTS {fixed}")
+
     def ignored_insert_has_no_id():
         cur = conn.execute(f"INSERT OR IGNORE INTO {t} (phone, hook, n) VALUES (?, ?, ?)",
                            ("15550002", "dup", 1))
@@ -374,6 +425,7 @@ def selftest(conn):
                      ("literal % in LIKE", literal_percent_survives),
                      ("update reports rowcount", update_reports_rowcount),
                      ("id survives other inserts", lastrowid_survives_other_inserts),
+                     ("seeded id frees the next", explicit_id_does_not_block_the_next),
                      ("ignored insert reports 0", ignored_insert_has_no_id),
                      ("executemany", executemany_works),
                      ("schema introspection", missing_column_is_detectable)):
