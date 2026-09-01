@@ -25,11 +25,11 @@
         <input type="checkbox" name="phone_validation" {{ 'checked' if phone_validation }}>
         Validate phone numbers during each pull (line type + drop dead numbers) — costs extra credits
       </label>
-      <label class="dim small" title="How many extra records to fetch per lead wanted. Outscraper bills per record returned, so 2.0 means paying for ~2x what you keep. Lower it until pulls start missing the target — the keep-rate shown after each pull tells you how low you can go.">
+      <label class="dim small" title="How many records to fetch per lead wanted. Outscraper bills per record returned, so this is the main cost dial — but lower is NOT automatically cheaper. Match it to 1 ÷ the keep-rate shown after each pull: at a 71% keep-rate, 1.4 fetches just enough. Set it below that and pulls fall short, forcing a top-up query with a 5-record minimum — which bills MORE than fetching enough the first time.">
         Fetch buffer
         <input type="number" name="buffer_multiplier" min="1" max="3" step="0.1"
                value="{{ buffer_multiplier }}" style="width:70px;">
-        <span class="dim">× target (lower = cheaper; 1.4 default)</span>
+        <span class="dim">× target — set to 1 ÷ keep-rate (1.4 suits a 71% keep-rate)</span>
       </label>
       <label class="chk-row">
         <input type="checkbox" name="review_signals" {{ 'checked' if review_signals }}>
