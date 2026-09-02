@@ -358,10 +358,12 @@ DEFAULT_SETTINGS = {
     # pull for a new campaign doesn't burn credits before anyone checks quality;
     # the user can type a larger number for any pull.
     "target_leads_per_day": "20",
-    # Extra records fetched per lead wanted. Outscraper bills per record
-    # RETURNED, so 2.0 meant paying for ~2x what we keep. Tunable in Settings;
-    # each pull reports its keep-rate so this can be lowered with evidence.
-    "buffer_multiplier": "1.4",
+    # Records fetched per lead wanted. Outscraper bills per record RETURNED, so
+    # this is the main cost dial. A lead costs 1/keep-rate records; measured
+    # keep-rates are 71/95/87/87%, so 1.2 covers the common case. Lower is NOT
+    # automatically cheaper — undershooting forces another query with a
+    # MIN_PER_LOCATION floor, which costs more than fetching enough at once.
+    "buffer_multiplier": "1.2",
     "default_industry": "hvac",
     # Ask Outscraper for emails + contact people (decision-makers). Costs extra
     # Outscraper credits per lead; turn off in Settings if not worth it.
@@ -805,6 +807,14 @@ def init_db(db_path=DB_FILE):
         if get_setting(conn, "buffer_multiplier", "") == "2.0":
             set_setting(conn, "buffer_multiplier", "1.4")
         set_setting(conn, "buffer_default_v2", "done")
+
+    # Measured keep-rates settled around 87%, so 1.4 was buying records that
+    # were thrown away. Only moves a database still on the old default — a value
+    # chosen in Settings is left alone.
+    if get_setting(conn, "buffer_default_v3", "") != "done":
+        if get_setting(conn, "buffer_multiplier", "") == "1.4":
+            set_setting(conn, "buffer_multiplier", "1.2")
+        set_setting(conn, "buffer_default_v3", "done")
 
     _seed_industries(conn)
     _seed_offers(conn)
