@@ -40,13 +40,27 @@ TITLES = [
     "practice manager", "office manager", "clinic manager", "general manager",
     "practice administrator", "administrator", "director of operations",
     "operations manager", "it manager", "director",
+    # French equivalents — a Quebec or New Brunswick site names its owner in
+    # French, and the English list above never matches it.
+    "propriétaire", "proprietaire", "directeur", "directrice", "gérant",
+    "gerant", "gérante", "gerante", "responsable", "associé", "associe",
+    "associée", "associee", "fondateur", "fondatrice", "président", "president",
+    "présidente", "presidente", "chef de clinique",
 ]
 # Professional credentials that usually mark the practice's principal.
 CREDENTIALS = ["dds", "dmd", "md", "do", "dc", "od", "dvm", "rmt", "bsc", "phd",
                "cpa", "llb", "jd"]
 
+# Latin letters including the accented ones. Canada is bilingual and a quarter of
+# this market is francophone: an [A-Z][a-z] name pattern silently skips every
+# René, Côté and Lévesque, which is most of a New Brunswick or Quebec list.
+_U = "A-ZÀ-ÖØ-Þ"
+_L = "a-zà-öø-ÿ"
 # "Firstname Lastname" — two or three capitalised words, no digits.
-NAME_RE = r"[A-Z][a-z]{1,15}(?:\s+[A-Z]\.)?\s+[A-Z][a-z'\-]{1,20}"
+NAME_RE = (r"[" + _U + r"][" + _L + r"]{1,15}(?:\s+[" + _U + r"]\.)?"
+           r"\s+[" + _U + r"][" + _L + r"'\-]{1,20}")
+# Dr / Dre (docteure) / Docteur / Docteure, with or without the point.
+DOCTOR_RE = r"\b(Dre?|Docteure?)\.?\s+"
 # Words that look like names but aren't people.
 NOT_NAMES = {
     "our team", "the team", "contact us", "about us", "read more", "learn more",
@@ -95,12 +109,15 @@ def extract_people(text):
     """People found in page text, best-first. Each: {name, title}."""
     found, seen = [], set()
 
-    # 1. "Dr. Firstname Lastname" — the strongest signal for clinics.
-    for m in re.finditer(r"\bDr\.?\s+(" + NAME_RE + r")", text):
-        name = _clean(m.group(1))
+    # 1. "Dr. Firstname Lastname" — the strongest signal for clinics. The
+    # honorific is kept as written: "Dre" is the French feminine form, and an
+    # agent reading "Dr." for a Dre starts the call by getting it wrong.
+    for m in re.finditer(DOCTOR_RE + r"(" + NAME_RE + r")", text):
+        name = _clean(m.group(2))
+        honorific = "Dre." if m.group(1).lower() in ("dre", "docteure") else "Dr."
         if _looks_like_name(name) and name.lower() not in seen:
             seen.add(name.lower())
-            found.append({"name": f"Dr. {name}", "title": "", "rank": 1})
+            found.append({"name": f"{honorific} {name}", "title": "", "rank": 1})
 
     # 2. "Firstname Lastname, DDS" / ", MD" — credentialed principal.
     cred = "|".join(CREDENTIALS)
