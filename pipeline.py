@@ -670,6 +670,42 @@ def _stamp_location_counts(conn, log=print):
 # next pass moves on to the others.
 MIN_PER_LOCATION = 5
 MAX_SWEEP_PASSES = 4
+# Off-industry results before a location is written off for an industry. Arviat
+# answers "dentist" with a coffee shop because it has no dentist; two such
+# answers with nothing to show for them is enough to stop asking.
+DEAD_MARKET_REJECTS = 2
+
+
+def _dead_markets(conn, industry_slugs):
+    """(city, industry) pairs that have produced rejects and never a lead.
+
+    Retiring a market only for the current run means every later pull pays to
+    rediscover it — and coverage ordering puts the emptiest regions first, so a
+    market with no businesses of this kind gets asked FIRST, every time.
+    Remembering it is what makes "tick everything" affordable: each dead market
+    costs one query once, rather than one query per pull forever.
+    """
+    if not industry_slugs:
+        return set()
+    ph = ",".join("?" * len(industry_slugs))
+    rows = conn.execute(
+        f"SELECT r.city, r.industry, COUNT(*) AS n FROM pull_rejects r "
+        f"WHERE r.industry IN ({ph}) AND r.reason = 'off_industry' "
+        f"GROUP BY r.city, r.industry HAVING COUNT(*) >= ?",
+        [*industry_slugs, DEAD_MARKET_REJECTS]).fetchall()
+    dead = set()
+    for r in rows:
+        city = (r["city"] or "").split(",")[0].strip().lower()
+        if not city:
+            continue
+        # A market that has ever yielded a real lead is not dead — it just has
+        # noise mixed in, which the per-record filter already handles.
+        got = conn.execute(
+            f"SELECT 1 FROM leads WHERE LOWER(city) = ? AND industry IN ({ph}) LIMIT 1",
+            [city, *industry_slugs]).fetchone()
+        if not got:
+            dead.add(city)
+    return dead
 
 
 def _plan_locations(conn, targets, industry_slugs):
@@ -689,6 +725,14 @@ def _plan_locations(conn, targets, industry_slugs):
     """
     if len(targets) < 2 or not industry_slugs:
         return targets
+    # Drop markets already shown to have none of this industry. Done before
+    # ordering, because ordering puts the emptiest first and a market with
+    # nothing to find is the emptiest of all.
+    dead = _dead_markets(conn, industry_slugs)
+    if dead:
+        live = [t for t in targets if (t["city"] or "").lower() not in dead]
+        if live:                      # never filter the list down to nothing
+            targets = live
     ph = ",".join("?" * len(industry_slugs))
     counts, region_counts = {}, {}
     for r in conn.execute(
