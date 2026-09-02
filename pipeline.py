@@ -432,6 +432,86 @@ def verify_lead_phones(conn, api_key, lead_rows, run_id=None, log=print):
     return {"checked": len(lead_rows), "invalid": invalid}
 
 
+# Words that mark a result as actually being in the industry asked for. Maps
+# search is a ranking, not a filter: query "dentist in Arviat" against a hamlet
+# with no dentist and it returns the nearest businesses it has — which is how a
+# Tim Hortons and a public library reached a dental list. Checked against the
+# business name AND the category Maps returns, so either one is enough to keep.
+INDUSTRY_KEYWORDS = {
+    "dentist": ("dent", "orthodont", "endodont", "periodont", "prosthodont",
+                "oral surg", "denturist", "hygien"),
+    "chiropractor": ("chiroprac",), "optometrist": ("optom", "eye", "optic", "vision"),
+    "orthoptics": ("orthopt", "eye", "vision"), "veterinarian": ("vet", "animal", "pet"),
+    "physiotherapy": ("physio", "physical therap", "rehab"),
+    "pharmacy": ("pharmac", "drug", "chemist"),
+    "medical_clinic": ("medic", "clinic", "health", "doctor", "physician", "family practice"),
+    "urgent_care": ("urgent", "walk-in", "walk in", "emergency", "medic", "clinic"),
+    "med_spa": ("med spa", "medspa", "aesthet", "esthet", "skin", "laser", "cosmetic"),
+    "law_firm": ("law", "attorney", "legal", "solicitor", "barrister", "notary", "lawyer"),
+    "accountant": ("account", "cpa", "tax", "bookkeep", "audit"),
+    "insurance_agency": ("insur", "assurance", "broker"),
+    "real_estate": ("real estate", "realt", "broker", "property"),
+    "consulting_firm": ("consult", "advisor", "advisory"),
+    "hotel": ("hotel", "motel", "inn", "resort", "lodg", "hostel", "suites"),
+    "car_dealership": ("dealer", "auto", "car", "motor", "vehicle", "truck"),
+    "auto_repair": ("auto", "car", "mechanic", "repair", "garage", "service station"),
+    "auto_body": ("auto", "body", "collision", "paint", "car"),
+    "auto_detailing": ("detail", "auto", "car wash", "car"),
+    "tire_shop": ("tire", "tyre", "wheel", "auto"),
+    "towing": ("tow", "recovery", "roadside"),
+    "hvac": ("hvac", "heating", "cooling", "air condition", "furnace", "ventilat"),
+    "plumbing": ("plumb", "drain", "rooter", "septic", "water"),
+    "electrician": ("electric",), "roofing": ("roof",), "flooring": ("floor", "carpet", "tile"),
+    "painting": ("paint", "decorat"), "fencing": ("fence", "fencing", "gate"),
+    "concrete": ("concrete", "cement", "paving", "masonry"),
+    "landscaping": ("landscap", "garden", "lawn", "yard", "nursery"),
+    "lawn_care": ("lawn", "landscap", "garden", "turf"),
+    "tree_service": ("tree", "arborist", "stump"),
+    "pest_control": ("pest", "exterminat", "termite", "wildlife"),
+    "cleaning": ("clean", "janitor", "maid", "housekeep"),
+    "carpet_cleaning": ("carpet", "clean", "upholster", "rug"),
+    "pressure_washing": ("pressure", "power wash", "wash", "clean", "exterior"),
+    "junk_removal": ("junk", "removal", "haul", "rubbish", "waste", "disposal"),
+    "moving": ("mov", "relocat", "storage", "van line"),
+    "locksmith": ("lock", "key", "security"),
+    "garage_door": ("garage", "door", "overhead"),
+    "gutter": ("gutter", "eaves", "downspout", "roof"),
+    "chimney": ("chimney", "fireplace", "sweep", "masonry"),
+    "septic": ("septic", "sewer", "waste", "plumb"),
+    "solar": ("solar", "photovolta", "energy", "renewab"),
+    "pool_service": ("pool", "spa", "hot tub"),
+    "appliance_repair": ("applian", "repair"), "handyman": ("handyman", "repair", "home"),
+    "remodeling": ("remodel", "renovat", "contractor", "construct", "kitchen", "bath"),
+    "restoration": ("restor", "water damage", "fire damage", "mold", "mould"),
+    "furniture_store": ("furnitur", "mattress", "home", "interior"),
+}
+
+
+def _industry_terms(slug, label=""):
+    """Keywords that mark a result as belonging to `slug`.
+
+    Falls back to the slug's own words for industries added by the user, so a
+    new industry is filtered on its own name rather than not at all.
+    """
+    terms = INDUSTRY_KEYWORDS.get(slug)
+    if terms:
+        return terms
+    words = [w for w in re.split(r"[^a-z]+", f"{slug} {label}".lower()) if len(w) > 3]
+    return tuple(dict.fromkeys(words)) or (slug.lower(),)
+
+
+def on_industry(slug, label, business_name, category):
+    """True when a returned place plausibly belongs to the industry searched for.
+
+    Permissive on purpose: the name OR the Maps category matching is enough, so
+    "Dr. Kerby Bruce and Associates" survives on its category and "Downtown
+    Dental" on its name. Only a result matching on neither is dropped.
+    """
+    terms = _industry_terms(slug, label)
+    haystack = f"{business_name} {category}".lower()
+    return any(t in haystack for t in terms)
+
+
 def is_chain(business_name, chain_names):
     if not business_name:
         return False
@@ -713,6 +793,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         today = str(date.today())
         added_total = 0
         places_seen = 0      # records Outscraper billed us for
+        off_industry = 0     # returned, but not in the industry searched for
         query_errors = 0
         last_error = ""
         new_lead_ids = []
@@ -829,6 +910,14 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                         if not name or not phone:
                             continue
                         if is_chain(name, chain_names):
+                            continue
+                        # Maps ranks rather than filters, so a thin market returns
+                        # whatever is nearby. Calling a coffee shop about network
+                        # infrastructure costs more than the lead is worth.
+                        if not on_industry(slug, industry["label"], name,
+                                           place.get("type") or place.get("category") or ""):
+                            off_industry += 1
+                            log(f"  skipped off-industry: {name}")
                             continue
                         biz_status = (place.get("business_status") or "").upper()
                         if "PERMANENTLY" in biz_status:
@@ -958,6 +1047,8 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
             keep = round(100.0 * added_total / places_seen)
             message += (f" | {added_total} kept of {places_seen} records fetched "
                         f"({keep}% keep-rate)")
+            if off_industry:
+                message += f" | {off_industry} off-industry dropped"
             status = "done"
         _update_run(conn, run_id, status=status, finished_at=db.now_iso(),
                     added=added_total, current_city="", message=message)
