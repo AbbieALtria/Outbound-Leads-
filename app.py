@@ -839,8 +839,16 @@ def dashboard():
     # Computed once — this runs COUNT queries, so calling it per template
     # argument doubled the work on every dashboard load.
     _discard_state = pull_run_discardable(conn, run_id)
+    # What this pull paid for and threw away. Shown so the filters can be
+    # checked rather than trusted — a real business dropped by mistake is
+    # invisible unless you can read the rejections.
+    rejects = conn.execute(
+        "SELECT business_name, category, city, reason FROM pull_rejects "
+        "WHERE run_id = ? ORDER BY reason, business_name", (run_id,)
+    ).fetchall() if run_id else []
     return render_template(
         "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
+        rejects=rejects,
         out_of_hours=(out_of_hours_count(conn, {"run_id": run_id}) if run_id else 0),
         industries=industries, statuses=db.LEAD_STATUSES, counts=counts,
         current_status=request.args.get("status", ""),

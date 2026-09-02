@@ -892,12 +892,23 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
 
                     added_this_query = 0
                     places_seen += len(places)
+                    rejects_here = 0
+
+                    def _reject(place_name, reason, category=""):
+                        """Record a paid-for record we chose not to keep."""
+                        conn.execute(
+                            "INSERT INTO pull_rejects (run_id, business_name, category, "
+                            "city, industry, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (run_id, place_name[:200], (category or "")[:120],
+                             city_label, slug, reason, db.now_iso()))
+
                     for place in places:
                         if added_total >= target:
                             break
 
                         name = (place.get("name") or place.get("title") or "").strip()
                         phone = (place.get("phone") or place.get("phone_number") or "").strip()
+                        category = place.get("type") or place.get("category") or ""
 
                         # NPPES occasionally has no phone. Rather than drop the lead,
                         # keep it under a unique NPI-based key and mark the phone
@@ -907,20 +918,26 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                         if not phone and place.get("npi"):
                             phone = f"NPI-{place['npi']}"
                             needs_phone = True
-                        if not name or not phone:
+                        if not name:
+                            continue
+                        if not phone:
+                            _reject(name, "no_phone", category)
                             continue
                         if is_chain(name, chain_names):
+                            _reject(name, "chain", category)
                             continue
                         # Maps ranks rather than filters, so a thin market returns
                         # whatever is nearby. Calling a coffee shop about network
                         # infrastructure costs more than the lead is worth.
-                        if not on_industry(slug, industry["label"], name,
-                                           place.get("type") or place.get("category") or ""):
+                        if not on_industry(slug, industry["label"], name, category):
                             off_industry += 1
-                            log(f"  skipped off-industry: {name}")
+                            rejects_here += 1
+                            _reject(name, "off_industry", category)
+                            log(f"  skipped off-industry: {name} [{category}]")
                             continue
                         biz_status = (place.get("business_status") or "").upper()
                         if "PERMANENTLY" in biz_status:
+                            _reject(name, "closed", category)
                             continue  # dead business -> guaranteed non-connect
 
                         address = place.get("full_address") or place.get("address") or ""
@@ -978,6 +995,14 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     conn.commit()
                     _update_run(conn, run_id, added=added_total)
                     log(f"  -> {added_this_query} new qualified leads ({slug}, {city_label})")
+                    # A market that answers mostly with the wrong industry has no
+                    # more of the right one — Maps was already reaching for
+                    # whatever was nearby. Asking again just buys more of that,
+                    # and we are billed per record returned, so retire it now.
+                    if places and rejects_here > len(places) / 2:
+                        exhausted.add(city_label)
+                        log(f"  {city_label}: {rejects_here}/{len(places)} off-industry "
+                            f"— no more {slug} here, dropping it")
                     time.sleep(1)  # be polite to the API between calls
 
                 # Stop paying to re-ask a location with nothing left: either it

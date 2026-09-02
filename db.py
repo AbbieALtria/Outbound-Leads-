@@ -588,6 +588,21 @@ CREATE TABLE IF NOT EXISTS alerts (
     seen INTEGER NOT NULL DEFAULT 0
 );
 
+-- Every record Outscraper returned that we chose NOT to keep, and why. These
+-- are already paid for, so recording them costs nothing and makes the filters
+-- auditable: a wrongly-dropped real business is invisible otherwise, and the
+-- only way to trust an automatic filter is to be able to read what it rejected.
+CREATE TABLE IF NOT EXISTS pull_rejects (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER,
+    business_name TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    industry TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',          -- off_industry | chain | closed | no_phone
+    created_at TEXT NOT NULL DEFAULT ''
+);
+
 -- An OFFER is the scoring/pitch profile (what makes a lead hot + call-hook
 -- wording). Was previously named "campaigns"; _migrate_campaigns_to_offers()
 -- renames the old table in place before this runs.

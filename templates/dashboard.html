@@ -146,6 +146,28 @@
       {% if batch['message'] %}
       <div class="dim small run-message" title="Keep-rate = leads kept ÷ records Outscraper billed for. Low keep-rate means the fetch buffer in Settings is set higher than it needs to be.">{{ batch['message'] }}</div>
       {% endif %}
+      {% if rejects %}
+      <details class="dim small run-message">
+        <summary style="cursor:pointer;">{{ rejects|length }} record{{ 's' if rejects|length != 1 }}
+          fetched but not kept — check the filters didn't drop a real one</summary>
+        <table class="mini" style="margin-top:6px;">
+          <tr><th>Business</th><th>Category</th><th>City</th><th>Dropped because</th></tr>
+          {% for r in rejects %}
+          <tr>
+            <td>{{ r['business_name'] }}</td>
+            <td class="dim">{{ r['category'] }}</td>
+            <td class="dim">{{ r['city'] }}</td>
+            <td>{{ {'off_industry': 'not this industry', 'chain': 'chain/franchise',
+                    'closed': 'permanently closed',
+                    'no_phone': 'no phone number'}.get(r['reason'], r['reason']) }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        <p class="dim small" style="margin:6px 0 0;">These were already paid for — Outscraper
+          bills per record returned. If a real prospect is listed here, tell me and I'll widen
+          the filter for that industry.</p>
+      </details>
+      {% endif %}
     {% elif run_id %}
       <strong>Current pull</strong> — {{ leads|length }} leads
     {% else %}
