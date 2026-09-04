@@ -24,6 +24,7 @@ import geo_data
 import nppes
 import dnc
 import scoring
+import site_contacts
 
 OUTSCRAPER_URL = "https://api.outscraper.com/maps/search-v3"
 
@@ -210,11 +211,34 @@ def _other_city_in_email(email, place_city):
     return ""
 
 
+def name_from_business(business_name):
+    """The practitioner named in the business's own name, or ''.
+
+    Owner-operated practices routinely put the owner on the sign — "Maple Street
+    Dental Dr. Janet McGinnis DDS", "Northwest Dentistry (Dr. Karen McLean)",
+    "Clinique dentaire Dre Catherine Morin-Houde". That name is already in every
+    Maps result, costs nothing to read, and is more reliable than anything
+    inferred from an email address. Reuses the site extractor's parser, so the
+    French honorifics and accented names are handled the same way.
+    """
+    try:
+        people = site_contacts.extract_people(business_name or "")
+    except Exception:                       # noqa: BLE001 - never break a pull
+        return ""
+    for person in people:
+        # Only the honorific forms: a bare capitalised pair in a business name
+        # is far more likely to be the street or the suburb than a person.
+        if person["name"].startswith(("Dr.", "Dre.")):
+            return person["name"]
+    return ""
+
+
 def extract_contact(place):
     """Best decision-maker guess as 'Name (Title)'. Outscraper's Maps data rarely
     carries a real person here, so this is best-effort: prefer a named contact
-    with an owner/GM/CEO-ish title, else any named contact, else a name inferred
-    from a personal email address. Returns '' when nothing credible is found."""
+    with an owner/GM/CEO-ish title, else any named contact, else the practitioner
+    named in the business name, else a name inferred from a personal email
+    address. Returns '' when nothing credible is found."""
     candidates = []
     for i in (1, 2, 3):
         name = (place.get(f"email_{i}_full_name") or "").strip()
@@ -237,6 +261,11 @@ def extract_contact(place):
         name, title = candidates[0]
         if _plausible_person(name, place):
             return f"{name} ({title})" if title else name
+    # The practitioner on the sign, before guessing at an email's local part:
+    # "Dr. Janet McGinnis" is stated, "Jonathan Logan" is deduced.
+    on_the_sign = name_from_business(place.get("name") or place.get("title") or "")
+    if on_the_sign:
+        return f"{on_the_sign} (practice name)"
     # Fall back to a name inferred from the primary email address.
     inferred = name_from_email(email)
     return f"{inferred} (from email)" if inferred else ""

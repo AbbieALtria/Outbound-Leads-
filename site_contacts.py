@@ -56,9 +56,13 @@ CREDENTIALS = ["dds", "dmd", "md", "do", "dc", "od", "dvm", "rmt", "bsc", "phd",
 # René, Côté and Lévesque, which is most of a New Brunswick or Quebec list.
 _U = "A-ZÀ-ÖØ-Þ"
 _L = "a-zà-öø-ÿ"
+# One name word: a capital, then a lowercase/apostrophe/hyphen, then anything —
+# so a capital INSIDE the word is allowed. Without that, McGinnis reads as "Mc"
+# and MacDonald as "Mac", which mangles a large share of Canadian surnames.
+# Requiring the second character to be non-capital still rejects "DDS" and "RCDSO".
+_WORD = r"[" + _U + r"][" + _L + r"'\-][" + _U + _L + r"'\-]{0,18}"
 # "Firstname Lastname" — two or three capitalised words, no digits.
-NAME_RE = (r"[" + _U + r"][" + _L + r"]{1,15}(?:\s+[" + _U + r"]\.)?"
-           r"\s+[" + _U + r"][" + _L + r"'\-]{1,20}")
+NAME_RE = _WORD + r"(?:\s+[" + _U + r"]\.)?\s+" + _WORD
 # Dr / Dre (docteure) / Docteur / Docteure, with or without the point.
 DOCTOR_RE = r"\b(Dre?|Docteure?)\.?\s+"
 # Words that look like names but aren't people.
