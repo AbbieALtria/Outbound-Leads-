@@ -729,6 +729,12 @@ def lead_filters(args):
     if args.get("industry"):
         where.append("industry = ?")
         params.append(args["industry"])
+    # Minimum score. The point of scoring is to act on the top of the list
+    # first — dialling it, exporting it, spending enrichment credits on it —
+    # and none of that was reachable without a way to select by it.
+    if str(args.get("min_score") or "").strip().lstrip("-").isdigit():
+        where.append("score >= ?")
+        params.append(int(args["min_score"]))
     if args.get("market_type"):
         where.append("market_type = ?")
         params.append(args["market_type"])

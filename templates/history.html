@@ -37,6 +37,11 @@
         {% endfor %}
       </select>
     </label>
+    <label title="Show only leads scoring at least this — the multi-location and
+      high-signal prospects worth calling, exporting or spending credits on first">Score ≥
+      <input type="number" name="min_score" min="0" max="200" step="5" style="width:70px;"
+             value="{{ f.get('min_score', '') }}" placeholder="any">
+    </label>
     <label>Market
       <select name="market_type">
         <option value="">all</option>
