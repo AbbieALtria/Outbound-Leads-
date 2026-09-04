@@ -19,6 +19,9 @@
       </label>
       <label class="dim small" title="Max leads this user can ever generate (0 = unlimited). Agents only.">Total cap<br><input type="number" name="lead_limit_total" min="0" value="0" style="width:90px;"></label>
       <label class="dim small" title="Max leads per day (0 = unlimited). Agents only.">Daily cap<br><input type="number" name="lead_limit_daily" min="0" value="0" style="width:90px;"></label>
+      <label class="dim small" title="A rolling allowance, e.g. 400 leads in any 15 days. Rolling rather than calendar, so the budget can't be spent twice across a reset.">Period cap<br><input type="number" name="lead_limit_period" min="0" value="0" style="width:90px;"></label>
+      <label class="dim small" title="Length of the rolling window in days.">over days<br><input type="number" name="lead_limit_period_days" min="1" max="365" value="15" style="width:70px;"></label>
+      <label class="dim small" title="Apollo credits this user may spend in the same window. Enrichment bills per credit (1 per company lookup or email, 8 per direct dial), so a lead cap alone does not bound the cost.">Credit cap<br><input type="number" name="credit_limit_period" min="0" value="0" style="width:90px;"></label>
       <span class="dim small" style="align-self:center;">0 = unlimited</span>
       <div class="dim small" style="flex-basis:100%;margin-top:2px;" title="Tick the campaigns this agent may pull for. None ticked = all campaigns.">Campaigns this user may pull (<strong>none = All</strong>):</div>
       <div class="ind-checks" style="max-width:560px;">
@@ -53,6 +56,18 @@
       <strong>{{ u['used_total'] }}{% if u['lead_limit_total'] %} / {{ u['lead_limit_total'] }}{% endif %}</strong>
       {% if u['lead_limit_total'] %}<span class="qbar"><span style="width:{{ [100, u['used_total'] * 100 // u['lead_limit_total']]|min }}%;{{ 'background:var(--red);' if u['used_total'] >= u['lead_limit_total'] }}"></span></span>{% else %}<span class="dim">no total cap</span>{% endif %}
     </span>
+    {% if u['lead_limit_period'] %}
+    <span class="dim small">Last {{ u['lead_limit_period_days'] or 15 }}d:
+      <strong>{{ u['used_period'] }} / {{ u['lead_limit_period'] }}</strong>
+      <span class="qbar"><span style="width:{{ [100, u['used_period'] * 100 // u['lead_limit_period']]|min }}%;{{ 'background:var(--red);' if u['used_period'] >= u['lead_limit_period'] }}"></span></span>
+    </span>
+    {% endif %}
+    {% if u['credit_limit_period'] %}
+    <span class="dim small" title="Apollo credits spent in the same rolling window">Credits:
+      <strong>{{ u['used_credits'] }} / {{ u['credit_limit_period'] }}</strong>
+      <span class="qbar"><span style="width:{{ [100, u['used_credits'] * 100 // u['credit_limit_period']]|min }}%;{{ 'background:var(--red);' if u['used_credits'] >= u['credit_limit_period'] }}"></span></span>
+    </span>
+    {% endif %}
     <span class="dim small">Campaigns:
       {% if u['allowed_ids'] %}{% for c in campaigns %}{% if c['id'] in u['allowed_ids'] %}<span class="chip">{{ c['name'] }}</span>{% endif %}{% endfor %}{% else %}<span class="chip">All</span>{% endif %}
     </span>
@@ -64,6 +79,9 @@
     <form method="post" action="{{ url_for('users_limits', user_id=u['id']) }}" class="u-edit-form">
       <label class="dim small">Total cap<br><input type="number" name="lead_limit_total" min="0" value="{{ u['lead_limit_total'] }}" style="width:90px;"></label>
       <label class="dim small">Daily cap<br><input type="number" name="lead_limit_daily" min="0" value="{{ u['lead_limit_daily'] }}" style="width:90px;"></label>
+      <label class="dim small" title="A rolling allowance, e.g. 400 leads in any 15 days.">Period cap<br><input type="number" name="lead_limit_period" min="0" value="{{ u['lead_limit_period'] }}" style="width:90px;"></label>
+      <label class="dim small" title="Length of the rolling window in days.">over days<br><input type="number" name="lead_limit_period_days" min="1" max="365" value="{{ u['lead_limit_period_days'] or 15 }}" style="width:70px;"></label>
+      <label class="dim small" title="Apollo credits allowed in the same window. 1 per company lookup or email reveal, 8 per direct dial.">Credit cap<br><input type="number" name="credit_limit_period" min="0" value="{{ u['credit_limit_period'] }}" style="width:90px;"></label>
       <span class="dim small" style="align-self:center;">0 = unlimited</span>
       <div class="dim small" style="flex-basis:100%;margin-top:4px;">Campaigns this user may pull (<strong>none checked = All</strong>):</div>
       <div class="ind-checks" style="max-width:560px;">

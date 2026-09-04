@@ -337,6 +337,9 @@ def users_page():
         d = dict(u)
         d["used_total"], d["used_today"] = users.usage(conn, u["id"])
         d["allowed_ids"] = users.allowed_campaign_ids(u)
+        window = users._col(u, "lead_limit_period_days", 15) or 15
+        d["used_period"] = users.period_usage(conn, u["id"], window)
+        d["used_credits"] = users.credits_used(conn, u["id"], window)
         rows.append(d)
     campaigns = conn.execute(
         "SELECT c.id, c.name, cl.name AS client_name FROM campaigns c "
@@ -365,7 +368,10 @@ def users_create():
         users.set_limits(conn, result,
                          request.form.get("lead_limit_total", "0"),
                          request.form.get("lead_limit_daily", "0"),
-                         request.form.getlist("allowed_campaigns"))
+                         request.form.getlist("allowed_campaigns"),
+                         period=request.form.get("lead_limit_period", "0"),
+                         period_days=request.form.get("lead_limit_period_days", "15"),
+                         credit_limit=request.form.get("credit_limit_period", "0"))
     return redirect(url_for("users_page"))
 
 
@@ -420,6 +426,9 @@ def users_limits(user_id):
         request.form.get("lead_limit_total", "0"),
         request.form.get("lead_limit_daily", "0"),
         request.form.getlist("allowed_campaigns"),
+        period=request.form.get("lead_limit_period", "0"),
+        period_days=request.form.get("lead_limit_period_days", "15"),
+        credit_limit=request.form.get("credit_limit_period", "0"),
     )
     return redirect(url_for("users_page"))
 
@@ -1833,16 +1842,24 @@ def start_pull():
             return jsonify({"error": "You can only pull for your assigned campaign(s). "
                             "Pick one of your campaigns from the dropdown."}), 403
         used_total, used_today = users.usage(conn, user["id"])
-        caps = []
+        caps, why = [], []
         if user["lead_limit_total"]:
             caps.append(user["lead_limit_total"] - used_total)
+            why.append("total")
         if user["lead_limit_daily"]:
             caps.append(user["lead_limit_daily"] - used_today)
+            why.append("daily")
+        period = users._col(user, "lead_limit_period", 0)
+        if period:
+            days = users._col(user, "lead_limit_period_days", 15) or 15
+            caps.append(period - users.period_usage(conn, user["id"], days))
+            why.append(f"{period} per {days} days")
         if caps:
             remaining = min(caps)
             if remaining <= 0:
-                return jsonify({"error": "You've reached your lead limit. Ask an admin "
-                                "to raise it or reset your usage."}), 403
+                return jsonify({"error": "You've reached your lead limit ("
+                                + ", ".join(why) + "). Ask an admin to raise it "
+                                "or reset your usage."}), 403
             target = min(target, remaining)
 
     # Location: a multi-select list from the dashboard, or a single typed location,
@@ -1974,7 +1991,7 @@ def verify_phones_status():
 _enrich_lock = threading.Lock()
 
 
-def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None):
+def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_id=None):
     try:
         conn = db.connect()
         rows = conn.execute(
@@ -1989,6 +2006,10 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None):
                                        reveal_phone=reveal_phone,
                                        want_company_size=want_size,
                                        log=lambda *_: None)
+        # Record what was actually spent, not the estimate — the budget must
+        # track real usage, and a run that finds nothing still costs lookups.
+        users.record_credits(conn, user_id, result.get("credits", 0),
+                             f"enrich {len(lead_ids)} leads")
         db.set_setting(conn, "enrich_last_result", json.dumps(result))
         conn.commit()
         conn.close()
@@ -2041,11 +2062,28 @@ def enrich_contacts():
         f"SELECT campaign_id FROM leads WHERE id IN ({','.join('?' * len(lead_ids))}) "
         f"AND campaign_id IS NOT NULL LIMIT 1", lead_ids).fetchone()
     campaign_id = row["campaign_id"] if row else None
+    # Credit budget. Enrichment bills per credit, not per lead, so a lead quota
+    # leaves the spend unbounded — direct dials alone are 8 credits each. The
+    # worst case is priced BEFORE spending anything, and the run is refused
+    # rather than half-completed against an exhausted budget.
+    user = getattr(g, "user", None)
+    budget = users.credit_budget_left(conn, user)
+    if budget is not None:
+        worst = contacts.worst_case_credits(
+            conn, lead_ids,
+            want_company_size=contacts.offer_wants_company_size(conn, campaign_id),
+            reveal_email=reveal_email, reveal_phone=reveal_phone)
+        if worst > budget:
+            return jsonify({"error":
+                f"This run could cost up to {worst} Apollo credits and you have "
+                f"{budget} left in your allowance. Select fewer leads, or ask an "
+                f"admin to raise your credit limit."}), 403
     if not _enrich_lock.acquire(blocking=False):
         return jsonify({"error": "An enrichment run is already in progress"}), 409
     threading.Thread(
         target=_enrich_worker,
-        args=(lead_ids, reveal_email, reveal_phone, campaign_id), daemon=True
+        args=(lead_ids, reveal_email, reveal_phone, campaign_id,
+              user["id"] if user else None), daemon=True
     ).start()
     return jsonify({"ok": True, "count": len(lead_ids)})
 

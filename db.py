@@ -460,6 +460,15 @@ PULL_RUN_EXTRA_COLUMNS = {
 USER_EXTRA_COLUMNS = {
     "lead_limit_total": "INTEGER NOT NULL DEFAULT 0",
     "lead_limit_daily": "INTEGER NOT NULL DEFAULT 0",
+    # A rolling allowance: `lead_limit_period` leads in the last
+    # `lead_limit_period_days` days. A client budgeting per fortnight can't be
+    # expressed as a daily cap — 400/15 days lets them pull 200 on Monday and
+    # nothing on Tuesday, which a 27/day cap would forbid.
+    "lead_limit_period": "INTEGER NOT NULL DEFAULT 0",
+    "lead_limit_period_days": "INTEGER NOT NULL DEFAULT 15",
+    # Apollo credits this user may spend in the same rolling window. Enrichment
+    # is billed per credit, so a lead cap alone does not bound the spend.
+    "credit_limit_period": "INTEGER NOT NULL DEFAULT 0",
     "allowed_campaigns": "TEXT NOT NULL DEFAULT ''",  # comma-separated campaign ids
     # 1 = must set a new password at next login (set on create + admin reset).
     "must_change_password": "INTEGER NOT NULL DEFAULT 0",
@@ -588,6 +597,17 @@ CREATE TABLE IF NOT EXISTS alerts (
     link TEXT NOT NULL DEFAULT '',            -- where to act on it
     created_at TEXT NOT NULL,
     seen INTEGER NOT NULL DEFAULT 0
+);
+
+-- Apollo credits spent, per user. Enrichment bills per credit rather than per
+-- lead, so a lead quota alone leaves the spend unbounded — one 20-lead batch
+-- with direct dials on costs 160 credits.
+CREATE TABLE IF NOT EXISTS credit_usage (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER,
+    credits INTEGER NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT ''
 );
 
 -- Every record Outscraper returned that we chose NOT to keep, and why. These

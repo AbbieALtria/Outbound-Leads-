@@ -11,7 +11,7 @@ with none of those set, the app stays open (no login) for convenience.
 """
 
 import os
-from datetime import date
+from datetime import date, timedelta
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -133,19 +133,25 @@ def list_users(conn):
     ).fetchall()
 
 
-def set_limits(conn, user_id, total, daily, allowed_campaigns):
-    """Admin-set per-user quotas. total/daily: 0 = unlimited. allowed_campaigns:
-    list/iterable of campaign ids ('' or empty = all campaigns)."""
-    def _int(v):
+def set_limits(conn, user_id, total, daily, allowed_campaigns,
+               period=0, period_days=15, credit_limit=0):
+    """Admin-set per-user quotas. 0 = unlimited for every cap. allowed_campaigns:
+    list/iterable of campaign ids ('' or empty = all campaigns).
+
+    `period`/`period_days` are the rolling lead allowance (e.g. 400 in 15 days)
+    and `credit_limit` the Apollo spend allowed in that same window."""
+    def _int(v, low=0):
         try:
-            return max(0, int(v))
+            return max(low, int(v))
         except (TypeError, ValueError):
-            return 0
+            return low
     ids = ",".join(str(int(c)) for c in allowed_campaigns if str(c).strip().isdigit())
     conn.execute(
-        "UPDATE users SET lead_limit_total = ?, lead_limit_daily = ?, allowed_campaigns = ? "
-        "WHERE id = ?",
-        (_int(total), _int(daily), ids, user_id),
+        "UPDATE users SET lead_limit_total = ?, lead_limit_daily = ?, "
+        "lead_limit_period = ?, lead_limit_period_days = ?, credit_limit_period = ?, "
+        "allowed_campaigns = ? WHERE id = ?",
+        (_int(total), _int(daily), _int(period), _int(period_days, 1) or 15,
+         _int(credit_limit), ids, user_id),
     )
     conn.commit()
 
@@ -169,6 +175,61 @@ def usage(conn, user_id):
         "WHERE r.user_id = ? AND l.pulled_date = ?",
         (user_id, str(date.today()))).fetchone()["n"]
     return total, today
+
+
+def period_usage(conn, user_id, days):
+    """Leads this user generated in the last `days` days (a rolling window).
+
+    Rolling rather than calendar: a fortnightly allowance that resets on a fixed
+    date lets someone spend the whole budget on the last day and the whole next
+    one on the first, which is exactly the burst a budget is meant to prevent.
+    """
+    if not days or days < 1:
+        return 0
+    since = str(date.today() - timedelta(days=int(days) - 1))
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM leads l JOIN pull_runs r ON l.run_id = r.id "
+        "WHERE r.user_id = ? AND l.pulled_date >= ?", (user_id, since)).fetchone()["n"]
+
+
+def credits_used(conn, user_id, days):
+    """Apollo credits this user spent in the last `days` days."""
+    if not days or days < 1:
+        return 0
+    since = str(date.today() - timedelta(days=int(days) - 1))
+    row = conn.execute(
+        "SELECT COALESCE(SUM(credits), 0) AS n FROM credit_usage "
+        "WHERE user_id = ? AND created_at >= ?", (user_id, since)).fetchone()
+    return int(row["n"] or 0)
+
+
+def record_credits(conn, user_id, credits, note=""):
+    """Log an Apollo spend against a user so the budget can be enforced."""
+    if not credits:
+        return
+    conn.execute(
+        "INSERT INTO credit_usage (user_id, credits, note, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, int(credits), note[:200], db.now_iso()))
+    conn.commit()
+
+
+def credit_budget_left(conn, user):
+    """Credits this user may still spend, or None when unlimited."""
+    if not user or user["role"] == "admin":
+        return None
+    limit = _col(user, "credit_limit_period", 0)
+    if not limit:
+        return None
+    days = _col(user, "lead_limit_period_days", 15) or 15
+    return max(0, limit - credits_used(conn, user["id"], days))
+
+
+def _col(row, name, default=None):
+    """Read a column that may not exist on an older row."""
+    try:
+        return row[name] if name in row.keys() else default
+    except (IndexError, KeyError, TypeError):
+        return default
 
 
 def reset_usage(conn, user_id):

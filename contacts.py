@@ -165,6 +165,30 @@ def offer_wants_company_size(conn, campaign_id=None):
         return False
 
 
+def worst_case_credits(conn, lead_ids, want_company_size, reveal_email, reveal_phone):
+    """Most this run could cost, priced the way Apollo bills.
+
+    Deliberately the ceiling, not an average: a budget check that guesses low
+    lets a run start and strand the user mid-batch with nothing to show. Only
+    leads with a website are looked up at all, company lookups are billed once
+    per DOMAIN however many leads share it, and an email reveal can only be
+    spent where there is no email yet.
+    """
+    if not lead_ids:
+        return 0
+    ph = ",".join("?" * len(lead_ids))
+    rows = conn.execute(
+        f"SELECT website, email, employee_count FROM leads WHERE id IN ({ph})",
+        list(lead_ids)).fetchall()
+    with_site = [r for r in rows if (r["website"] or "").strip()]
+    domains = {domain_of(r["website"]) for r in with_site
+               if r["employee_count"] is None} - {""}
+    need_email = sum(1 for r in with_site if not (r["email"] or "").strip())
+    return ((len(domains) if want_company_size else 0)
+            + (need_email if reveal_email else 0)
+            + (len(with_site) * 8 if reveal_phone else 0))
+
+
 def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
                  want_company_size=True, log=print):
     """Enrich each website-having lead with a decision-maker via Apollo — as a
