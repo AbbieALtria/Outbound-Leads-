@@ -559,7 +559,8 @@ if (enrichBtn) {
       }
       eresult.className = "pull-result ok";
       eresult.textContent =
-        `Found ${r.site_hits || 0} decision-makers free from company websites. ` +
+        `Found ${r.site_hits || 0} of ${r.site_tried || 0} decision-makers free from ` +
+        `company websites${siteRate(r)}. ` +
         `Enriched ${r.enriched || 0} of ${r.checked || 0} Apollo calls — ` +
         `${r.emails || 0} emails, ${r.phones || 0} direct dials, ` +
         `${r.org_calls || 0} company lookups. ` +
