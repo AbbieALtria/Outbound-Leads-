@@ -531,7 +531,13 @@ if (enrichBtn) {
         eresult.textContent =
           `Found ${r.site_hits || 0} of ${r.site_tried || 0} decision-makers free from ` +
           `company websites${siteRate(r)}. ` +
-          `Apollo unavailable: ${r.error}`;
+          `Apollo people search unavailable: ${r.error}` +
+          // Enrichment and Search are separate entitlements; say which worked.
+          (r.org_error
+            ? ` Company lookups also refused: ${r.org_error}`
+            : r.org_calls
+              ? ` Company lookups DID work (${r.org_calls} made) — so the key is valid and only search is refused.`
+              : "");
         if (r.site_hits) setTimeout(() => location.reload(), 2500);
         return;
       }

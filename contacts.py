@@ -105,6 +105,13 @@ def enrich_organization(website, timeout=30):
     resp = requests.get(ORG_URL, params={"domain": domain}, headers=_headers(),
                         timeout=timeout)
     if resp.status_code != 200:
+        # Distinguish "this plan may not call this endpoint" from "no match".
+        # Apollo's tiers separate Enrichment from Search, so one can work while
+        # the other is refused — and silently returning {} hid which was which.
+        if resp.status_code in (401, 403):
+            raise PermissionError(
+                f"Organization Enrichment refused ({resp.status_code}) — "
+                f"this Apollo plan may not include it")
         return {}
     org = (resp.json() or {}).get("organization") or {}
     if not org:
@@ -200,12 +207,16 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         never overwriting what Outscraper already found (a paid reveal for an
         email/contact we already have is wasted).
     Returns {checked, enriched, emails, phones, skipped_already_enriched,
-    org_calls, site_hits, site_tried, error}
+    org_calls, site_hits, site_tried, credits, org_error, error}
     where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
     avoided."""
     checked = enriched = emails = phones = skipped = org_calls = site_hits = 0
     site_tried = 0     # leads the free website tier could actually attempt
     error = ""
+    # Tracked apart from `error`: Enrichment and Search are separate Apollo
+    # entitlements, so one can be refused while the other works, and collapsing
+    # both into one message hides which half of the plan is actually usable.
+    org_error, org_blocked = "", False
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     apollo_blocked = False  # set on 401/403 — key/plan can't use the API
     for row in lead_rows:
@@ -217,10 +228,15 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         # and never re-fetched for a lead that already has them.
         have_org = ("employee_count" in row.keys()) and row["employee_count"] is not None
         dom = "" if (have_org or not want_company_size) else domain_of(website)
-        if dom and not apollo_blocked and dom not in org_cache:
+        if dom and not org_blocked and dom not in org_cache:
             try:
                 org_cache[dom] = enrich_organization(website)
                 org_calls += 1
+            except PermissionError as e:
+                # Refused by the plan — it will be refused for every remaining
+                # domain too, so stop paying attempts and record why.
+                org_cache[dom], org_blocked = {}, True
+                org_error = str(e)
             except Exception as e:
                 org_cache[dom] = {}
                 if not error:
@@ -304,4 +320,5 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     return {"checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
             "org_calls": org_calls, "site_hits": site_hits,
-            "site_tried": site_tried, "credits": credits, "error": error}
+            "site_tried": site_tried, "credits": credits,
+            "org_error": org_error, "error": error}
