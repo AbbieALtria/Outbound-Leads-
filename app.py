@@ -870,6 +870,15 @@ def dashboard():
         last_enrich = json.loads(db.get_setting(conn, "enrich_last_result", "") or "{}")
     except (json.JSONDecodeError, TypeError):
         last_enrich = {}
+    # Only alongside the pull it was actually run on. A result recorded before
+    # runs were tracked has no run_ids and is still shown, since hiding those is
+    # what made results look like they had disappeared.
+    # Compared as strings: run_id arrives from the query string, the stored ids
+    # come back from the database as integers, and "5" != 5 would hide the box
+    # on every pull including the right one.
+    if last_enrich.get("run_ids") and str(run_id) not in {
+            str(r) for r in last_enrich["run_ids"]}:
+        last_enrich = {}
     return render_template(
         "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
         rejects=rejects, last_enrich=last_enrich,
@@ -2050,6 +2059,13 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_
         # the live readout is wiped by the page reload that follows a run.
         result["finished_at"] = db.now_iso()
         result["leads"] = len(lead_ids)
+        # Which pull these leads came from. The stored result is global, so
+        # without this a new pull shows the previous batch's enrichment as if it
+        # were its own — inviting one batch's numbers to be read as another's.
+        runs = [r["run_id"] for r in conn.execute(
+            f"SELECT DISTINCT run_id FROM leads WHERE id IN "
+            f"({','.join('?' * len(lead_ids))}) AND run_id IS NOT NULL", lead_ids)]
+        result["run_ids"] = runs
         db.set_setting(conn, "enrich_last_result", json.dumps(result))
         conn.commit()
         conn.close()
