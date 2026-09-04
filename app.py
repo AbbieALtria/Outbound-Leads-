@@ -1277,6 +1277,14 @@ def export_vicidial():
 
     fields = ["Name", "Full_Address", "Street_Address", "City", "State", "Zip",
               "Website", "Phone", "Email", "Category", "URL"]
+    # Opt-in only. The eleven columns above are what the client's VICIdial list
+    # loader expects, and silently adding to them risks a rejected upload. But
+    # without these the agent never sees who to ask for or why they are calling
+    # — the two things the whole pipeline exists to produce — so the columns are
+    # available for a list configured to accept them.
+    with_contact = str(request.args.get("with_contact") or "") in ("1", "true", "yes")
+    if with_contact:
+        fields = fields + ["Contact", "Contact_Title", "Score", "Call_Hook"]
     if include_cbt:
         fields = fields + ["Callback_Time"]
     buf = io.StringIO()
@@ -1296,6 +1304,17 @@ def export_vicidial():
             "Category": lead["category"],
             "URL": lead["maps_url"],
         }
+        if with_contact:
+            # "Dr. Ada Lovelace (practice name)" is for reading in the app; an
+            # agent wants the name alone to ask for, so the provenance note is
+            # stripped here.
+            contact = re.sub(r"\s*\((?:from email|practice name)\)\s*$", "",
+                             lead["contact"] or "").strip()
+            row.update({"Contact": contact,
+                        "Contact_Title": (lead["contact_title"] if "contact_title"
+                                          in lead.keys() else "") or "",
+                        "Score": lead["score"],
+                        "Call_Hook": lead["call_hook"]})
         if include_cbt:
             cbt = cb_by_phone.get(normalize_phone(lead["phone"]))
             row["Callback_Time"] = str(cbt)[:16] if cbt else ""

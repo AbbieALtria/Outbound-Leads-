@@ -71,7 +71,11 @@
     <button type="submit">Filter</button>
     <a class="button" href="{{ url_for('history') }}">Clear</a>
     <a class="button" href="{{ url_for('history', status='callback') }}">Callbacks due</a>
-    <a class="button" href="{{ url_for('export_vicidial', **f) }}">VICIdial CSV</a>
+    <a class="button" href="{{ url_for('export_vicidial', **f) }}"
+       title="Your VICIdial loader's exact eleven columns">VICIdial CSV</a>
+    <a class="button" href="{{ url_for('export_vicidial', with_contact=1, **f) }}"
+       title="The same file plus Contact, Contact_Title, Score and Call_Hook — only
+              use this if your VICIdial list is mapped to accept those columns">+ contact &amp; hook</a>
     <a class="button" href="{{ url_for('export_csv', **f) }}">Export CSV</a>
     {# Enrichment belongs here as much as on the Dashboard: this is the only
        place you can scope it — to one industry, one city, one campaign —
