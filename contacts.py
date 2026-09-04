@@ -71,13 +71,21 @@ def find_contact(website, titles=None, reveal_email=False, reveal_phone=False,
     domain = domain_of(website)
     if not enabled() or not domain:
         return {}
+    # Apollo takes the domain filter as a LIST parameter. The older scalar
+    # `q_organization_domains` is rejected with 422 (Unprocessable Entity) —
+    # authorised, but the body is not understood — which read like a plan
+    # restriction until the key gained access and the status code changed.
     body = {
-        "q_organization_domains": domain,
+        "q_organization_domains_list": [domain],
         "person_titles": titles or TARGET_TITLES,
         "page": 1, "per_page": 1,
     }
     resp = requests.post(SEARCH_URL, json=body, headers=_headers(), timeout=timeout)
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        # Include Apollo's own explanation: a 4xx here names the offending
+        # parameter, and discarding it turns a precise complaint into a guess.
+        raise RuntimeError(
+            f"Apollo people search {resp.status_code}: {resp.text[:300]}")
     people = (resp.json() or {}).get("people") or []
     if not people:
         return {}
@@ -294,10 +302,12 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
             if not error:
                 error = str(e)
             log(f"  enrich failed for lead {row['id']}: {e}")
-            # An auth/permission failure is not per-lead — it will repeat for every
-            # remaining lead, so stop calling Apollo and let the free website tier
-            # carry the rest of the batch.
-            if any(code in str(e) for code in ("401", "403")):
+            # Auth, permission and malformed-request failures are not per-lead:
+            # they repeat identically for every remaining one, so stop calling
+            # Apollo and let the free website tier carry the rest of the batch.
+            # 422 belongs here as much as 401/403 — a body Apollo cannot parse
+            # will not become parseable on the next lead.
+            if any(code in str(e) for code in ("401", "403", "422")):
                 apollo_blocked = True
             continue
         # Fill ONLY the gaps — never overwrite Outscraper's contact/email.
