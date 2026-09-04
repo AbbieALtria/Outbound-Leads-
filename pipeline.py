@@ -268,7 +268,23 @@ def extract_contact(place):
         return f"{on_the_sign} (practice name)"
     # Fall back to a name inferred from the primary email address.
     inferred = name_from_email(email)
+    if inferred and _is_the_business(inferred, place.get("name") or place.get("title") or ""):
+        return ""
     return f"{inferred} (from email)" if inferred else ""
+
+
+def _is_the_business(name, business_name):
+    """True when an 'inferred person' is really the business's own name.
+
+    northernsmiles.nu@gmail.com splits into "Northernsmiles Nu", which reads as
+    a person and is the sign above the door. Asking for them by name announces
+    that the caller is working from a list.
+    """
+    biz = re.sub(r"[^a-z]", "", (business_name or "").lower())
+    if not biz:
+        return False
+    return any(len(w) >= 5 and w in biz
+               for w in re.sub(r"[^a-z ]", " ", name.lower()).split())
 
 
 def extract_email(place):
