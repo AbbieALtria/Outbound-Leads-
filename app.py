@@ -984,6 +984,18 @@ def storage_status(conn):
             counts[table] = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
         except db.DbError:
             counts[table] = "?"
+    # Split the lead count by origin. A total that mixes leads this app
+    # generated with numbers the dialer sent back reads as a fault the first
+    # time it outruns the pull count — 2,838 leads from 4 pulls looks like
+    # runaway duplication until you can see that most came from VICIdial.
+    try:
+        by_source = conn.execute(
+            "SELECT CASE WHEN lead_source = 'vicidial' THEN 'from VICIdial' "
+            "ELSE 'generated here' END AS src, COUNT(*) AS n FROM leads GROUP BY src"
+        ).fetchall()
+        counts.update({r["src"]: r["n"] for r in by_source})
+    except db.DbError:
+        pass
     # Which container is answering. The Railway Console can be a different
     # container from the one serving traffic, and when it is, a volume can look
     # mounted in the shell while the web process never sees it — so identify the
