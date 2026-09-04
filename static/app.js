@@ -539,9 +539,10 @@ if (enrichBtn) {
       eresult.textContent =
         `Found ${r.site_hits || 0} decision-makers free from company websites. ` +
         `Enriched ${r.enriched || 0} of ${r.checked || 0} Apollo calls — ` +
-        `${r.emails || 0} emails, ${r.phones || 0} direct dials. ` +
-        `Skipped ${r.skipped_already_enriched || 0} already-enriched (Apollo credits saved). ` +
-        `${r.org_calls || 0} company lookups (1 credit each).`;
+        `${r.emails || 0} emails, ${r.phones || 0} direct dials, ` +
+        `${r.org_calls || 0} company lookups. ` +
+        `Skipped ${r.skipped_already_enriched || 0} already-enriched. ` +
+        `Spent ${r.credits || 0} Apollo credit${r.credits === 1 ? "" : "s"}.`;
       setTimeout(() => location.reload(), 1800);
     }
   };
@@ -605,10 +606,25 @@ if (enrichBtn) {
       `(${ids.length ? "selected" : "this entire batch"}).`;
     document.getElementById("enrich-modal-email").textContent = revealEmail ? "ON" : "OFF";
     document.getElementById("enrich-modal-phone").textContent = revealPhone ? "ON" : "OFF";
-    document.getElementById("enrich-modal-cost").textContent =
-      (revealEmail ? `up to ${n} credit${n === 1 ? "" : "s"} (email)` : "0 (email reveal is off)") +
-      " + " +
-      (revealPhone ? `up to ${n * 8} credits (direct dial)` : "0 (direct dial is off)") + ".";
+    // Estimate what Apollo will actually bill, not the row count. Only leads
+    // with a website are looked up at all; an email credit is only spent where
+    // there is no email yet; company lookups are billed once per domain.
+    const boxes = [...document.querySelectorAll(".lead-select")];
+    const chosen = ids.length ? boxes.filter((b) => b.checked) : boxes;
+    const withSite = chosen.filter((b) => b.dataset.site === "1");
+    const needEmail = withSite.filter((b) => b.dataset.email !== "1").length;
+    const domains = new Set(withSite.map((b) => b.dataset.domain).filter(Boolean)).size;
+    const wantsSize = enrichBtn.dataset.companySize === "1";
+    const parts = [];
+    if (wantsSize && domains) parts.push(`${domains} company lookup${domains === 1 ? "" : "s"}`);
+    if (revealEmail && needEmail) parts.push(`up to ${needEmail} email reveal${needEmail === 1 ? "" : "s"}`);
+    if (revealPhone && withSite.length) parts.push(`up to ${withSite.length * 8} for direct dials`);
+    const worst = (wantsSize ? domains : 0)
+      + (revealEmail ? needEmail : 0)
+      + (revealPhone ? withSite.length * 8 : 0);
+    document.getElementById("enrich-modal-cost").textContent = parts.length
+      ? `${parts.join(" + ")} — at most ${worst} credit${worst === 1 ? "" : "s"}.`
+      : "0 credits — nothing here spends any.";
     modal.hidden = false;
   });
 

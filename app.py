@@ -124,6 +124,13 @@ def require_login():
     return redirect(url_for("login", next=request.path))
 
 
+@app.template_filter("domain")
+def _domain(value):
+    """Bare domain of a website URL — Apollo bills company lookups per domain,
+    so the cost estimate counts distinct domains, not leads."""
+    return contacts.domain_of(value or "")
+
+
 @app.template_filter("fromjson")
 def _fromjson(value):
     """Parse a JSON column (e.g. an offer's pain_keywords list) in a template."""
@@ -849,6 +856,8 @@ def dashboard():
     return render_template(
         "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
         rejects=rejects,
+        offer_wants_company_size=contacts.offer_wants_company_size(
+            conn, sel_id if str(sel_id or "").isdigit() else None),
         out_of_hours=(out_of_hours_count(conn, {"run_id": run_id}) if run_id else 0),
         industries=industries, statuses=db.LEAD_STATUSES, counts=counts,
         current_status=request.args.get("status", ""),
@@ -1965,7 +1974,7 @@ def verify_phones_status():
 _enrich_lock = threading.Lock()
 
 
-def _enrich_worker(lead_ids, reveal_email, reveal_phone):
+def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None):
     try:
         conn = db.connect()
         rows = conn.execute(
@@ -1973,8 +1982,13 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone):
             f"WHERE id IN ({','.join('?' * len(lead_ids))})",
             lead_ids,
         ).fetchall()
+        # Company lookups cost a credit each and feed only company_size_fit, so
+        # skip them entirely for an offer that doesn't score on it.
+        want_size = contacts.offer_wants_company_size(conn, campaign_id)
         result = contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
-                                       reveal_phone=reveal_phone, log=lambda *_: None)
+                                       reveal_phone=reveal_phone,
+                                       want_company_size=want_size,
+                                       log=lambda *_: None)
         db.set_setting(conn, "enrich_last_result", json.dumps(result))
         conn.commit()
         conn.close()
@@ -2021,10 +2035,17 @@ def enrich_contacts():
 
     reveal_email = db.get_setting(conn, "enrich_reveal_email", "1") == "1"
     reveal_phone = db.get_setting(conn, "enrich_reveal_phone", "0") == "1"
+    # Whose offer scores these leads decides whether company lookups are worth
+    # buying; take it from the leads themselves rather than the current view.
+    row = conn.execute(
+        f"SELECT campaign_id FROM leads WHERE id IN ({','.join('?' * len(lead_ids))}) "
+        f"AND campaign_id IS NOT NULL LIMIT 1", lead_ids).fetchone()
+    campaign_id = row["campaign_id"] if row else None
     if not _enrich_lock.acquire(blocking=False):
         return jsonify({"error": "An enrichment run is already in progress"}), 409
     threading.Thread(
-        target=_enrich_worker, args=(lead_ids, reveal_email, reveal_phone), daemon=True
+        target=_enrich_worker,
+        args=(lead_ids, reveal_email, reveal_phone, campaign_id), daemon=True
     ).start()
     return jsonify({"ok": True, "count": len(lead_ids)})
 

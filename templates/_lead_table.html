@@ -21,7 +21,14 @@
   <tbody>
     {% for lead in leads %}
     <tr data-lead-id="{{ lead['id'] }}" class="status-{{ lead['status'] }}">
-      {% if select_leads %}<td><input type="checkbox" class="lead-select" value="{{ lead['id'] }}"></td>{% endif %}
+      {% if select_leads %}<td><input type="checkbox" class="lead-select" value="{{ lead['id'] }}"
+        {# Cost estimate reads these: only a lead with a site is enriched at all,
+           only one missing an email can spend an email credit, and company
+           lookups are billed once per domain however many leads share it. #}
+        data-site="{{ '1' if lead['website'] else '0' }}"
+        data-email="{{ '1' if lead['email'] else '0' }}"
+        data-contact="{{ '1' if lead['contact'] else '0' }}"
+        data-domain="{{ (lead['website'] or '')|domain }}"></td>{% endif %}
       <td class="dim">{{ loop.index }}</td>
       <td>
         <strong>{{ lead['business_name'] }}</strong>

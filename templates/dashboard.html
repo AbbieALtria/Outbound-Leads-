@@ -185,6 +185,7 @@
       data-reveal-email="{{ '1' if enrich_reveal_email else '0' }}"
       data-reveal-phone="{{ '1' if enrich_reveal_phone else '0' }}"
       data-settings-url="{{ url_for('settings') }}"
+      data-company-size="{{ '1' if offer_wants_company_size else '0' }}"
       title="Find the decision-maker (name/title, and direct dial if enabled) via Apollo for this pull's leads that have a website">Enrich contacts</button>
     {% endif %}
     <a class="button primary-outline" href="{{ url_for('export_vicidial', run_id=run_id) }}"

@@ -145,7 +145,28 @@ def _reveal(person, domain, reveal_email, reveal_phone, timeout):
         return {}
 
 
-def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=print):
+def offer_wants_company_size(conn, campaign_id=None):
+    """True when the offer that will score these leads rewards company size.
+
+    Organization Enrichment costs a credit per company, and the only thing it
+    feeds is the company_size_fit signal. Buying it for an offer whose rules
+    never mention that signal is spending real money on a column nothing reads.
+    """
+    import db
+    import json as _json
+    try:
+        camp = conn.execute("SELECT * FROM campaigns WHERE id = ?",
+                            (campaign_id,)).fetchone() if campaign_id else None
+        offer = db.offer_for_campaign(conn, camp)
+        rules = _json.loads((offer["rules"] if offer else "") or "{}")
+        return "company_size_fit" in rules
+    except Exception:
+        # Unreadable rules shouldn't silently start spending credits.
+        return False
+
+
+def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
+                 want_company_size=True, log=print):
     """Enrich each website-having lead with a decision-maker via Apollo — as a
     WATERFALL over Outscraper's own enrichment:
       - if BOTH contact and email are already present (Outscraper's
@@ -171,7 +192,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
         # Company firmographics: once per unique domain in this run (1 credit each),
         # and never re-fetched for a lead that already has them.
         have_org = ("employee_count" in row.keys()) and row["employee_count"] is not None
-        dom = "" if have_org else domain_of(website)
+        dom = "" if (have_org or not want_company_size) else domain_of(website)
         if dom and not apollo_blocked and dom not in org_cache:
             try:
                 org_cache[dom] = enrich_organization(website)
@@ -253,7 +274,10 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False, log=pr
             conn.execute(f"UPDATE leads SET {', '.join(sets)} WHERE id = ?", vals)
             enriched += 1
     conn.commit()
+    # What this run actually cost, in Apollo's own units: search is free, an
+    # email reveal is 1, a direct dial is 8, and each company lookup is 1.
+    credits = org_calls + emails + (phones * 8)
     return {"checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
             "org_calls": org_calls, "site_hits": site_hits,
-            "site_tried": site_tried, "error": error}
+            "site_tried": site_tried, "credits": credits, "error": error}
