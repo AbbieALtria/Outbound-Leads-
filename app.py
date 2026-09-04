@@ -937,8 +937,24 @@ def settings():
         enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
         enrich_reveal_phone=db.get_setting(conn, "enrich_reveal_phone", "0") == "1",
         api_key_set=bool(pipeline.get_api_key()),
+        apollo_key_tail=_key_tail(contacts.api_key()),
         storage=storage_status(conn),
     )
+
+
+def _key_tail(key):
+    """Last four characters of a key, for identification only.
+
+    Apollo shows the same tail on its API-keys page, so this answers "is the key
+    deployed here the key I am looking at?" — a question that otherwise needs
+    someone to paste a live credential somewhere it shouldn't go. Four
+    characters identify without enabling: they are useless to an attacker and
+    decisive to the operator.
+    """
+    key = (key or "").strip()
+    if not key:
+        return ""
+    return ("…" + key[-4:]) if len(key) > 8 else "(too short to show)"
 
 
 def storage_status(conn):

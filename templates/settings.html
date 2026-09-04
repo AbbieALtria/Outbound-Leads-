@@ -43,7 +43,10 @@
       </label>
       <hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">
       <p class="dim small" style="margin:0 0 4px;">Apollo contact enrichment (decision-maker) —
-        {% if apollo_enabled %}<strong style="color:var(--green)">connected</strong>{% else %}set <code>APOLLO_API_KEY</code> in Railway to enable{% endif %}.
+        {% if apollo_enabled %}<strong style="color:var(--green)">key present</strong>, ending
+        <code>{{ apollo_key_tail }}</code> — compare that with the key shown on Apollo's
+        API-keys page; if they differ, the key here is a stale one and every call will be
+        refused.{% else %}set <code>APOLLO_API_KEY</code> in Railway to enable{% endif %}
         Name &amp; title are free; reveals cost Apollo credits.</p>
       <label class="chk-row">
         <input type="checkbox" name="enrich_reveal_email" {{ 'checked' if enrich_reveal_email }}>
