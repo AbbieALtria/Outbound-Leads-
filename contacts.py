@@ -37,6 +37,11 @@ TARGET_TITLES = [
     "general manager", "coo", "vp operations", "director of operations",
     "operations manager", "office manager", "practice manager", "clinic manager",
     "it manager", "it director", "director of it",
+    # The practitioner IS the decision-maker in an owner-operated clinic, and
+    # their title is their profession, not a business role. Leaving these out
+    # made a filtered search look like an empty database.
+    "dentist", "doctor", "dds", "dmd", "physician", "veterinarian", "optometrist",
+    "chiropractor", "pharmacist", "lawyer", "attorney", "partner", "associate",
 ]
 
 
@@ -78,18 +83,25 @@ def find_contact(website, titles=None, reveal_email=False, reveal_phone=False,
     # `q_organization_domains` is rejected with 422 (Unprocessable Entity) —
     # authorised, but the body is not understood — which read like a plan
     # restriction until the key gained access and the status code changed.
-    body = {
-        "q_organization_domains_list": [domain],
-        "person_titles": titles or TARGET_TITLES,
-        "page": 1, "per_page": 1,
-    }
-    resp = requests.post(SEARCH_URL, json=body, headers=_headers(), timeout=timeout)
-    if resp.status_code != 200:
-        # Include Apollo's own explanation: a 4xx here names the offending
-        # parameter, and discarding it turns a precise complaint into a guess.
-        raise RuntimeError(
-            f"Apollo people search {resp.status_code}: {resp.text[:300]}")
-    people = (resp.json() or {}).get("people") or []
+    def _search(with_titles):
+        body = {"q_organization_domains_list": [domain], "page": 1, "per_page": 1}
+        if with_titles:
+            body["person_titles"] = titles or TARGET_TITLES
+        resp = requests.post(SEARCH_URL, json=body, headers=_headers(), timeout=timeout)
+        if resp.status_code != 200:
+            # Include Apollo's own explanation: a 4xx here names the offending
+            # parameter, and discarding it turns a precise complaint into a guess.
+            raise RuntimeError(
+                f"Apollo people search {resp.status_code}: {resp.text[:300]}")
+        return (resp.json() or {}).get("people") or []
+
+    people = _search(with_titles=True)
+    if not people:
+        # Fall back to anyone at the company. A title filter cannot distinguish
+        # "nobody works here" from "nobody here has a title I listed", and search
+        # costs no credits — so the narrower question is asked first and the
+        # broader one only when it comes back empty.
+        people = _search(with_titles=False)
     if not people:
         return {}
     p = people[0]
