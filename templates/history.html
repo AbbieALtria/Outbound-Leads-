@@ -68,6 +68,17 @@
     <a class="button" href="{{ url_for('history', status='callback') }}">Callbacks due</a>
     <a class="button" href="{{ url_for('export_vicidial', **f) }}">VICIdial CSV</a>
     <a class="button" href="{{ url_for('export_csv', **f) }}">Export CSV</a>
+    {# Enrichment belongs here as much as on the Dashboard: this is the only
+       place you can scope it — to one industry, one city, one campaign —
+       rather than to whichever pull happens to be current. #}
+    <button type="button" id="enrich-btn" class="button"
+      data-filters='{{ filter_args|tojson }}'
+      data-reveal-email="{{ '1' if enrich_reveal_email and apollo_enabled else '0' }}"
+      data-reveal-phone="{{ '1' if enrich_reveal_phone and apollo_enabled else '0' }}"
+      data-apollo="{{ '1' if apollo_enabled else '0' }}"
+      data-company-size="{{ '1' if offer_wants_company_size and apollo_enabled else '0' }}"
+      data-settings-url="{{ url_for('settings') }}"
+      title="Find decision-makers for the leads matching these filters">Enrich contacts</button>
   </form>
   {% if out_of_hours %}
   <p class="warn" style="margin-top:8px;">⚠️ <strong>{{ out_of_hours }}</strong> of these leads {{ 'are' if out_of_hours != 1 else 'is' }} outside the recipient's legal calling window right now (CRTC / US TSR). Ensure VICIdial dials by the recipient's time zone — or <a href="{{ url_for('export_vicidial', enforce_hours=1, **f) }}">export in-hours only</a>.</p>
@@ -75,6 +86,8 @@
 </section>
 
 <p class="dim">{{ leads | length }} lead(s)</p>
+<div id="enrich-result" class="pull-result" hidden></div>
+{% include "_enrich_modal.html" %}
 
 {% with show_date = true, show_industry = true %}
   {% include "_lead_table.html" %}

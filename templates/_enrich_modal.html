@@ -1,0 +1,39 @@
+{# Shared by the Dashboard and History: enrichment can be started from either,
+   and a confirmation that only exists on one page is a confirmation that can
+   be skipped. #}
+<div id="enrich-modal" class="modal-backdrop" hidden>
+  <div class="modal-card">
+    {# Two different actions share this dialog. Without Apollo nothing here can
+       cost anything, and warning about money that cannot be spent teaches people
+       to click through warnings. #}
+    {% if apollo_enabled %}
+    <h3 style="margin-top:0;">⚠️ Contact Enrichment (Apollo) — this will spend money</h3>
+    <p id="enrich-modal-scope"></p>
+    <ul class="small" style="line-height:1.6;">
+      <li><strong>Name + title lookup is FREE.</strong> Knowing who to ask for gets you past most gatekeepers.</li>
+      <li><strong>Email reveal costs 1 Apollo credit per lead</strong> — only runs if “reveal email” is on in Settings (currently: <strong id="enrich-modal-email"></strong>).</li>
+      <li><strong>Direct-dial/mobile reveal costs 8 Apollo credits per lead</strong> — off by default; turn on only for your best targets (e.g. multi-location accounts) (currently: <strong id="enrich-modal-phone"></strong>).</li>
+      <li><strong>Estimated cost for this run:</strong> <span id="enrich-modal-cost"></span> All credits come out of your Apollo plan.</li>
+    </ul>
+    <p class="dim small">Reveal toggles live in <a href="{{ url_for('settings') }}">Settings</a>.</p>
+    {% else %}
+    <h3 style="margin-top:0;">Contact Enrichment — free</h3>
+    <p id="enrich-modal-scope"></p>
+    <ul class="small" style="line-height:1.6;">
+      <li>Reads each business's <strong>own website</strong> for a named
+        decision-maker — About, Team and “Meet Dr —” pages.</li>
+      <li><strong>No provider, no API key, no credits.</strong>
+        <span id="enrich-modal-cost"></span></li>
+      <li>Leads that already have a contact are skipped, and one with no website
+        can't be looked up — so it only works on the rest.</li>
+    </ul>
+    <p class="dim small" hidden><span id="enrich-modal-email"></span><span id="enrich-modal-phone"></span></p>
+    <p class="dim small">No Apollo key is set. Add <code>APOLLO_API_KEY</code> in
+      Railway to also search a paid database.</p>
+    {% endif %}
+    <p style="text-align:right;margin-bottom:0;">
+      <button type="button" class="button" id="enrich-cancel">Cancel</button>
+      <button type="button" class="primary" id="enrich-confirm">Yes, enrich these leads</button>
+    </p>
+  </div>
+</div>

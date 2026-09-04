@@ -618,6 +618,11 @@ if (enrichBtn) {
     eresult.textContent = "Looking up decision-makers…";
     try {
       const payload = { run_id: enrichBtn.dataset.run_id || "", only_missing: true };
+      // On History the set is defined by the active filters, not a pull — so
+      // "Dentist, Canada" enriches exactly those and nothing else.
+      try {
+        Object.assign(payload, JSON.parse(enrichBtn.dataset.filters || "{}"));
+      } catch { /* no filters on this page */ }
       if (ids.length) payload.lead_ids = ids;      // only the checked rows
       const r = await postJSON("/api/enrich_contacts", payload);
       eresult.textContent = `Enriching ${r.count} leads…`;

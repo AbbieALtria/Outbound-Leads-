@@ -930,8 +930,17 @@ def history():
         "history.html", leads=leads,
         countries=distinct("country"), states=distinct("state"), cities=distinct("city"),
         industries=industries, statuses=db.LEAD_STATUSES, f=request.args,
+        # A plain dict: request.args is a MultiDict and does not serialise to
+        # JSON for the enrich button's filter payload.
+        filter_args={k: v for k, v in request.args.items() if v},
         not_interested_reasons=db.NOT_INTERESTED_REASONS,
         user_list=user_list,
+        # Enrichment can be started from here too, so the same cost signals the
+        # dashboard shows have to be available.
+        enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
+        enrich_reveal_phone=db.get_setting(conn, "enrich_reveal_phone", "0") == "1",
+        offer_wants_company_size=contacts.offer_wants_company_size(
+            conn, request.args.get("campaign_id")),
         out_of_hours=out_of_hours_count(conn, request.args),
     )
 
