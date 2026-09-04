@@ -20,6 +20,7 @@ from pathlib import Path
 import requests
 
 import db
+import geo_data
 import nppes
 import dnc
 import scoring
@@ -186,6 +187,29 @@ def _plausible_person(name, place):
     return True
 
 
+def _other_city_in_email(email, place_city):
+    """City named in an email address that isn't this listing's city.
+
+    A chain publishes one mailbox per site — fom_grandeprairie@sandman.ca — and
+    Maps happily attaches it to a different site's listing. The contact is real,
+    but they work somewhere else, and an agent asking Abbotsford for the Grande
+    Prairie manager has lost the call in its first sentence.
+    """
+    local = (email or "").split("@", 1)[0].lower()
+    if not local:
+        return ""
+    squashed = re.sub(r"[^a-z]", "", local)
+    here = re.sub(r"[^a-z]", "", (place_city or "").lower())
+    for cities in geo_data.CITIES_BY_STATE.values():
+        for city in cities:
+            key = re.sub(r"[^a-z]", "", city.lower())
+            # Short names like "Ajax" or "York" appear inside ordinary words, so
+            # only trust a match long enough to be deliberate.
+            if len(key) >= 6 and key in squashed and key != here:
+                return city
+    return ""
+
+
 def extract_contact(place):
     """Best decision-maker guess as 'Name (Title)'. Outscraper's Maps data rarely
     carries a real person here, so this is best-effort: prefer a named contact
@@ -197,6 +221,13 @@ def extract_contact(place):
         title = (place.get(f"email_{i}_title") or "").strip()
         if name:
             candidates.append((name, title))
+    email = extract_email(place)
+    # A mailbox belonging to another branch means the person on the other end of
+    # it is not at this address, whatever their title says.
+    elsewhere = _other_city_in_email(email, place.get("city") or "")
+    if elsewhere:
+        return ""
+
     decision_words = ("owner", "founder", "ceo", "president", "general manager",
                       "gm", "principal", "partner", "director", "manager")
     for name, title in candidates:
@@ -207,7 +238,7 @@ def extract_contact(place):
         if _plausible_person(name, place):
             return f"{name} ({title})" if title else name
     # Fall back to a name inferred from the primary email address.
-    inferred = name_from_email(extract_email(place))
+    inferred = name_from_email(email)
     return f"{inferred} (from email)" if inferred else ""
 
 
