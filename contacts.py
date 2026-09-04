@@ -234,6 +234,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
     avoided."""
     checked = enriched = emails = phones = skipped = org_calls = site_hits = 0
+    org_charged = 0    # lookups that returned data — the ones Apollo bills for
     site_tried = 0     # leads the free website tier could actually attempt
     error = ""
     # Tracked apart from `error`: Enrichment and Search are separate Apollo
@@ -255,10 +256,18 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         # and never re-fetched for a lead that already has them.
         have_org = ("employee_count" in row.keys()) and row["employee_count"] is not None
         dom = "" if (have_org or not want_company_size) else domain_of(website)
-        if dom and not org_blocked and dom not in org_cache:
+        # `enabled()` guards the counter, not just the call: enrich_organization
+        # returns {} without contacting Apollo when there is no key, so counting
+        # unconditionally reported lookups that never happened — and, through
+        # `credits`, spending that never occurred.
+        if dom and enabled() and not org_blocked and dom not in org_cache:
             try:
                 org_cache[dom] = enrich_organization(website)
+                # Apollo bills only when it finds something, so an empty answer
+                # is a call made and nothing charged.
                 org_calls += 1
+                if org_cache[dom]:
+                    org_charged += 1
             except PermissionError as e:
                 # Refused by the plan — it will be refused for every remaining
                 # domain too, so stop paying attempts and record why.
@@ -354,9 +363,11 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
             scoring.rescore_leads(conn, sorted(touched))
         except Exception as e:                    # noqa: BLE001
             log(f"  rescore after enrichment failed: {e}")
-    # What this run actually cost, in Apollo's own units: search is free, an
-    # email reveal is 1, a direct dial is 8, and each company lookup is 1.
-    credits = org_calls + emails + (phones * 8)
+    # What this run actually cost, in Apollo's own units: search is free, a
+    # direct dial is 8, and an email or a company lookup is 1 -- but only when
+    # data came back. Apollo charges nothing for a request that finds nothing,
+    # so counting attempts overstated the bill.
+    credits = org_charged + emails + (phones * 8)
     return {"checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
             "org_calls": org_calls, "site_hits": site_hits,
