@@ -20,7 +20,10 @@ import requests
 
 import site_contacts
 
-SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search"
+# People Search. The older mixed_people/search is deprecated for API callers and
+# answers 422 with SEARCH.ROUTING.LEGACY_PEOPLE_SEARCH_DEPRECATED; api_search is
+# its replacement. The UI still serves the old path, so this only bites the API.
+SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/api_search"
 MATCH_URL = "https://api.apollo.io/api/v1/people/match"
 # Organization Enrichment. NOTE: per Apollo's docs this costs 1 CREDIT PER
 # ORGANIZATION (it is not free), so callers dedupe by domain within a run and the
