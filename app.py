@@ -876,8 +876,14 @@ def dashboard():
     # Compared as strings: run_id arrives from the query string, the stored ids
     # come back from the database as integers, and "5" != 5 would hide the box
     # on every pull including the right one.
-    if last_enrich.get("run_ids") and str(run_id) not in {
-            str(r) for r in last_enrich["run_ids"]}:
+    if last_enrich.get("run_ids"):
+        if str(run_id) not in {str(r) for r in last_enrich["run_ids"]}:
+            last_enrich = {}
+    elif last_enrich.get("finished_at") and batch and batch["started_at"] > \
+            last_enrich["finished_at"]:
+        # An untagged result from before this pull began cannot describe it.
+        # Untagged results are shown by default so nothing looks lost, but one
+        # that predates the pull would otherwise follow every future batch.
         last_enrich = {}
     return render_template(
         "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
