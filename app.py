@@ -1019,6 +1019,18 @@ def storage_status(conn):
         counts.update({r["src"]: r["n"] for r in by_source})
     except db.DbError:
         pass
+    # Which industries the generated leads are in. "How many dentists do I
+    # actually have?" decides when a market is worked out and it is time to
+    # rotate — and a single total cannot answer it.
+    industries = []
+    try:
+        industries = [
+            (r["industry"] or "(unset)", r["n"]) for r in conn.execute(
+                "SELECT industry, COUNT(*) AS n FROM leads "
+                "WHERE lead_source != 'vicidial' GROUP BY industry "
+                "ORDER BY n DESC LIMIT 8")]
+    except db.DbError:
+        pass
     # Which container is answering. The Railway Console can be a different
     # container from the one serving traffic, and when it is, a volume can look
     # mounted in the shell while the web process never sees it — so identify the
@@ -1044,6 +1056,7 @@ def storage_status(conn):
     return {"path": "Postgres (managed service)" if db.POSTGRES else str(db.DB_FILE),
             "app_dir": str(db.SCRIPT_DIR),
             "ident": ident,
+            "industries": industries,
             "postgres": db.POSTGRES,
             "postgres_error": db.POSTGRES_ERROR,
             "selftest": DB_SELFTEST,

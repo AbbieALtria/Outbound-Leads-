@@ -142,7 +142,16 @@
       {% for name, n in storage.counts.items() %}
       <tr><td>{{ name.replace('_', ' ') }}</td><td>{{ n }}</td></tr>
       {% endfor %}
+      {% for industry, n in storage.industries %}
+      <tr><td class="dim" style="padding-left:18px;">— {{ industry.replace('_', ' ') }}</td>
+        <td class="dim">{{ n }}</td></tr>
+      {% endfor %}
     </table>
+    {% if storage.industries %}
+    <p class="dim small">Industries shown are the leads this app generated. A market is
+      worked out when its keep-rate falls — rotate industry or geography rather than
+      paying for duplicates.</p>
+    {% endif %}
     {% if storage.postgres %}
     <p class="dim small">If leads vanished, they were discarded or deleted in the app —
     a managed database cannot lose them to a deploy.</p>
