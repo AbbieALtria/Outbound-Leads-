@@ -89,7 +89,9 @@
 <div id="enrich-result" class="pull-result" hidden></div>
 {% include "_enrich_modal.html" %}
 
-{% with show_date = true, show_industry = true %}
+{# Row selection matters more here than on the Dashboard: this is where you'd
+   pick a handful to try before spending on a whole filtered set. #}
+{% with show_date = true, show_industry = true, select_leads = true %}
   {% include "_lead_table.html" %}
 {% endwith %}
 
