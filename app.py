@@ -862,9 +862,17 @@ def dashboard():
         "SELECT business_name, category, city, reason FROM pull_rejects "
         "WHERE run_id = ? ORDER BY reason, business_name", (run_id,)
     ).fetchall() if run_id else []
+    # The last enrichment's outcome. Written to settings by the worker and read
+    # back here because the page reloads as soon as a run finishes, wiping the
+    # live readout — the numbers that say what a run cost and found should not
+    # be the ones you have to catch before they vanish.
+    try:
+        last_enrich = json.loads(db.get_setting(conn, "enrich_last_result", "") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        last_enrich = {}
     return render_template(
         "dashboard.html", leads=leads, batch=batch, batch_user=batch_user, run_id=run_id,
-        rejects=rejects,
+        rejects=rejects, last_enrich=last_enrich,
         offer_wants_company_size=contacts.offer_wants_company_size(
             conn, sel_id if str(sel_id or "").isdigit() else None),
         out_of_hours=(out_of_hours_count(conn, {"run_id": run_id}) if run_id else 0),
@@ -2038,6 +2046,10 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_
         # track real usage, and a run that finds nothing still costs lookups.
         users.record_credits(conn, user_id, result.get("credits", 0),
                              f"enrich {len(lead_ids)} leads")
+        # Stamped so the stored result can be shown later with its own date —
+        # the live readout is wiped by the page reload that follows a run.
+        result["finished_at"] = db.now_iso()
+        result["leads"] = len(lead_ids)
         db.set_setting(conn, "enrich_last_result", json.dumps(result))
         conn.commit()
         conn.close()

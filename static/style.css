@@ -231,6 +231,11 @@ tr.active-campaign { background: #e3ecfd; }
 /* Pull outcome (incl. keep-rate) on its own line under the banner. order:1 keeps
    it last even though it precedes the History link in the markup. */
 .current-pull .run-message { order: 1; width: 100%; margin: 2px 0 0; }
+.enrich-result { position: relative; background: #f1f7ef; border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 30px 8px 12px; line-height: 1.5; }
+.enrich-last-hide { position: absolute; top: 4px; right: 6px; border: none;
+  background: none; font-size: 16px; line-height: 1; cursor: pointer; color: var(--dim); }
+.enrich-last-hide:hover { color: var(--text); }
 .stats { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .stat { color: var(--dim); font-size: 13px; }
 .stat strong { color: var(--text); }

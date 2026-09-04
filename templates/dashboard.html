@@ -146,6 +146,27 @@
       {% if batch['message'] %}
       <div class="dim small run-message" title="Keep-rate = leads kept ÷ records Outscraper billed for. Low keep-rate means the fetch buffer in Settings is set higher than it needs to be.">{{ batch['message'] }}</div>
       {% endif %}
+      {% if last_enrich and last_enrich.get('finished_at') %}
+      {# Kept after the reload that follows a run: what it found and what it
+         cost are exactly the numbers worth reading twice. #}
+      <div class="dim small run-message enrich-result" id="enrich-last">
+        <button type="button" class="enrich-last-hide" title="Hide this">&times;</button>
+        <strong>Last enrichment</strong>
+        <span class="dim">{{ last_enrich['finished_at'][:16].replace('T', ' ') }}
+          · {{ last_enrich.get('leads', 0) }} lead{{ 's' if last_enrich.get('leads') != 1 }}</span><br>
+        Found <strong>{{ last_enrich.get('site_hits', 0) }}</strong> of
+        {{ last_enrich.get('site_tried', 0) }} decision-makers free from company websites{%
+          if last_enrich.get('site_tried') %} ({{ (100 * last_enrich.get('site_hits', 0) //
+          last_enrich['site_tried']) }}%){% endif %}.
+        Apollo returned <strong>{{ last_enrich.get('enriched', 0) }}</strong> of
+        {{ last_enrich.get('checked', 0) }} searched
+        ({{ last_enrich.get('emails', 0) }} emails, {{ last_enrich.get('phones', 0) }} direct dials,
+        {{ last_enrich.get('org_calls', 0) }} company lookups).
+        Spent <strong>{{ last_enrich.get('credits', 0) }}</strong> Apollo credits.
+        {% if last_enrich.get('error') %}<br><span class="warn">Apollo search: {{ last_enrich['error'][:200] }}</span>{% endif %}
+        {% if last_enrich.get('org_error') %}<br><span class="warn">Company lookups: {{ last_enrich['org_error'][:200] }}</span>{% endif %}
+      </div>
+      {% endif %}
       {% if rejects %}
       <details class="dim small run-message">
         <summary style="cursor:pointer;">{{ rejects|length }} record{{ 's' if rejects|length != 1 }}

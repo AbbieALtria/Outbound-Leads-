@@ -503,6 +503,22 @@ const enrichBtn = document.getElementById("enrich-btn");
 if (enrichBtn) {
   const eresult = document.getElementById("enrich-result");
 
+  // Dismissing the stored result is a per-viewer preference, keyed to the run
+  // that produced it: a NEW enrichment should reappear even if the last one was
+  // hidden, so the key includes its timestamp.
+  const lastBox = document.getElementById("enrich-last");
+  if (lastBox) {
+    const stamp = lastBox.querySelector(".dim")?.textContent?.trim() || "";
+    const key = "enrich-hidden:" + stamp;
+    try {
+      if (localStorage.getItem(key) === "1") lastBox.hidden = true;
+    } catch { /* private mode / blocked storage — just show it */ }
+    lastBox.querySelector(".enrich-last-hide")?.addEventListener("click", () => {
+      lastBox.hidden = true;
+      try { localStorage.setItem(key, "1"); } catch { /* nothing to remember */ }
+    });
+  }
+
   // Hits alone don't say whether the free tier is working — "1 found" is a
   // triumph out of 2 and a failure out of 16. Report the rate it was measured
   // over, so the number that decides whether a paid provider is needed is the
