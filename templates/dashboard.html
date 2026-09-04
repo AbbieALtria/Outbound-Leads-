@@ -146,14 +146,19 @@
       {% if batch['message'] %}
       <div class="dim small run-message" title="Keep-rate = leads kept ÷ records Outscraper billed for. Low keep-rate means the fetch buffer in Settings is set higher than it needs to be.">{{ batch['message'] }}</div>
       {% endif %}
-      {% if last_enrich and last_enrich.get('finished_at') %}
+      {# Shown for any stored result, not only ones carrying a timestamp — runs
+         from before the stamp existed are exactly the ones someone goes looking
+         for, and hiding them is how a result "disappears". #}
+      {% if last_enrich %}
       {# Kept after the reload that follows a run: what it found and what it
          cost are exactly the numbers worth reading twice. #}
       <div class="dim small run-message enrich-result" id="enrich-last">
         <button type="button" class="enrich-last-hide" title="Hide this">&times;</button>
         <strong>Last enrichment</strong>
-        <span class="dim">{{ last_enrich['finished_at'][:16].replace('T', ' ') }}
-          · {{ last_enrich.get('leads', 0) }} lead{{ 's' if last_enrich.get('leads') != 1 }}</span><br>
+        <span class="dim">{% if last_enrich.get('finished_at') %}{{
+            last_enrich['finished_at'][:16].replace('T', ' ') }}{% else %}earlier run{% endif %}{%
+            if last_enrich.get('leads') %} · {{ last_enrich['leads'] }} lead{{
+            's' if last_enrich['leads'] != 1 }}{% endif %}</span><br>
         Found <strong>{{ last_enrich.get('site_hits', 0) }}</strong> of
         {{ last_enrich.get('site_tried', 0) }} decision-makers free from company websites{%
           if last_enrich.get('site_tried') %} ({{ (100 * last_enrich.get('site_hits', 0) //
