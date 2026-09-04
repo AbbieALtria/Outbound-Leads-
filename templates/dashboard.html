@@ -163,11 +163,15 @@
         {{ last_enrich.get('site_tried', 0) }} decision-makers free from company websites{%
           if last_enrich.get('site_tried') %} ({{ (100 * last_enrich.get('site_hits', 0) //
           last_enrich['site_tried']) }}%){% endif %}.
+        {% if not last_enrich.get('checked') and not last_enrich.get('org_calls') %}
+        No paid provider configured — nothing searched, no credits spent.
+        {% else %}
         Apollo returned <strong>{{ last_enrich.get('enriched', 0) }}</strong> of
         {{ last_enrich.get('checked', 0) }} searched
         ({{ last_enrich.get('emails', 0) }} emails, {{ last_enrich.get('phones', 0) }} direct dials,
         {{ last_enrich.get('org_calls', 0) }} company lookups).
         Spent <strong>{{ last_enrich.get('credits', 0) }}</strong> Apollo credits.
+        {% endif %}
         {% if last_enrich.get('error') %}<br><span class="warn">Apollo search: {{ last_enrich['error'][:200] }}</span>{% endif %}
         {% if last_enrich.get('org_error') %}<br><span class="warn">Company lookups: {{ last_enrich['org_error'][:200] }}</span>{% endif %}
       </div>
