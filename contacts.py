@@ -315,7 +315,10 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         #   - revealing a direct dial         -> Apollo may add one (8 credits)
         # Otherwise (e.g. the website already gave us the name and reveals are off)
         # the call could return nothing useful, so skip it entirely.
-        needs_apollo = (not apollo_blocked) and ((not have_contact)
+        # enabled() first: without a key find_contact returns {} without any
+        # request, so counting these as "searched" reports work Apollo never did
+        # — the same mistake the company-lookup counter made.
+        needs_apollo = enabled() and (not apollo_blocked) and ((not have_contact)
                         or (reveal_email and not have_email)
                         or reveal_phone)
         if not needs_apollo:
