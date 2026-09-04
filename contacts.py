@@ -228,6 +228,10 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     # entitlements, so one can be refused while the other works, and collapsing
     # both into one message hides which half of the plan is actually usable.
     org_error, org_blocked = "", False
+    # Leads whose scoring inputs changed. Company size is bought with credits
+    # and feeds company_size_fit, but a signal is only read when a lead is
+    # scored -- without this the data sits in a column that nothing evaluates.
+    touched = set()
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     apollo_blocked = False  # set on 401/403 — key/plan can't use the API
     for row in lead_rows:
@@ -259,6 +263,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
                 "company_industry = ? WHERE id = ?",
                 (org.get("employee_count"), org.get("revenue", ""),
                  org.get("industry", ""), row["id"]))
+            touched.add(row["id"])
         have_contact = bool(((row["contact"] if "contact" in row.keys() else "") or "").strip())
         have_email = bool(((row["email"] if "email" in row.keys() else "") or "").strip())
 
@@ -282,6 +287,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
                     (found["name"], found.get("title", ""), row["id"]))
                 have_contact = True
                 site_hits += 1
+                touched.add(row["id"])
         # Waterfall gate: only call Apollo if it can still ADD something.
         #   - no contact yet                  -> Apollo may find one (search is free)
         #   - email missing AND revealing     -> Apollo may unlock it (1 credit)
@@ -326,7 +332,16 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
             vals.append(row["id"])
             conn.execute(f"UPDATE leads SET {', '.join(sets)} WHERE id = ?", vals)
             enriched += 1
+            touched.add(row["id"])
     conn.commit()
+    # Re-score what changed, each under its own campaign's offer. Skipping this
+    # meant paying for employee counts that never reached a score.
+    if touched:
+        try:
+            import scoring
+            scoring.rescore_leads(conn, sorted(touched))
+        except Exception as e:                    # noqa: BLE001
+            log(f"  rescore after enrichment failed: {e}")
     # What this run actually cost, in Apollo's own units: search is free, an
     # email reveal is 1, a direct dial is 8, and each company lookup is 1.
     credits = org_calls + emails + (phones * 8)
