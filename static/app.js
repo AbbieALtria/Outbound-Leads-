@@ -510,12 +510,22 @@ if (enrichBtn) {
   if (lastBox) {
     const stamp = lastBox.querySelector(".dim")?.textContent?.trim() || "";
     const key = "enrich-hidden:" + stamp;
+    const remember = (hidden) => {
+      try { localStorage.setItem(key, hidden ? "1" : "0"); } catch { /* not storable */ }
+    };
     try {
       if (localStorage.getItem(key) === "1") lastBox.hidden = true;
     } catch { /* private mode / blocked storage — just show it */ }
     lastBox.querySelector(".enrich-last-hide")?.addEventListener("click", () => {
       lastBox.hidden = true;
-      try { localStorage.setItem(key, "1"); } catch { /* nothing to remember */ }
+      remember(true);
+    });
+    // Explicit toggle: the reload after a run takes the live readout away
+    // within a second, so there has to be a way to ask for it back.
+    document.getElementById("enrich-last-toggle")?.addEventListener("click", () => {
+      lastBox.hidden = !lastBox.hidden;
+      remember(lastBox.hidden);
+      if (!lastBox.hidden) lastBox.scrollIntoView({ block: "nearest" });
     });
   }
 
@@ -554,7 +564,9 @@ if (enrichBtn) {
             : r.org_calls
               ? ` Company lookups DID work (${r.org_calls} made) — so the key is valid and only search is refused.`
               : "");
-        if (r.site_hits) setTimeout(() => location.reload(), 2500);
+        // Long enough to read the line before the reload replaces it; the
+        // stored copy and the "Last result" button cover it after that.
+        if (r.site_hits) setTimeout(() => location.reload(), 6000);
         return;
       }
       eresult.className = "pull-result ok";
@@ -566,7 +578,7 @@ if (enrichBtn) {
         `${r.org_calls || 0} company lookups. ` +
         `Skipped ${r.skipped_already_enriched || 0} already-enriched. ` +
         `Spent ${r.credits || 0} Apollo credit${r.credits === 1 ? "" : "s"}.`;
-      setTimeout(() => location.reload(), 1800);
+      setTimeout(() => location.reload(), 6000);
     }
   };
 

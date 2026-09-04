@@ -208,6 +208,12 @@
     {# Always offered: the website tier is free and needs no provider. With
        Apollo absent the reveal flags are forced off, so the button cannot
        promise anything it can't do. #}
+    {% if last_enrich %}
+    {# The page reloads a second after a run finishes, so the live readout is
+       gone before it can be read. This brings the stored one back on demand. #}
+    <button type="button" id="enrich-last-toggle" class="button"
+      title="Show or hide the result of the last enrichment on this pull">Last result</button>
+    {% endif %}
     <button id="enrich-btn" class="button" {{ 'disabled' if not leads }}
       data-run_id="{{ run_id or '' }}"
       data-reveal-email="{{ '1' if enrich_reveal_email and apollo_enabled else '0' }}"
