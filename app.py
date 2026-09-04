@@ -2069,10 +2069,12 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_
 def enrich_contacts():
     """Enrich the currently filtered leads that have a website with a decision-maker
     name/title (+ email/direct-dial per the reveal settings). Background; poll
-    /api/enrich_contacts/status. Free for names/titles; reveal spends Apollo credits."""
-    if not contacts.enabled():
-        return jsonify({"error": "APOLLO_API_KEY is not set — add it in Railway → "
-                        "Variables to enable contact enrichment."}), 400
+    /api/enrich_contacts/status.
+
+    Not gated on Apollo. The first tier reads the business's own website, needs
+    no vendor and no key, and finds a decision-maker for roughly half of these
+    leads — refusing to run it because a paid provider is absent throws away the
+    part that works for free."""
     conn = get_db()
     args = request.json or {}
     picked = args.get("lead_ids")

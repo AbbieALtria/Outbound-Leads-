@@ -636,7 +636,18 @@ if (enrichBtn) {
     const withSite = chosen.filter((b) => b.dataset.site === "1");
     const needEmail = withSite.filter((b) => b.dataset.email !== "1").length;
     const domains = new Set(withSite.map((b) => b.dataset.domain).filter(Boolean)).size;
+    const hasApollo = enrichBtn.dataset.apollo === "1";
     const wantsSize = enrichBtn.dataset.companySize === "1";
+    if (!hasApollo) {
+      // Nothing here can spend anything, so say so plainly rather than
+      // showing a cost breakdown of zeroes.
+      document.getElementById("enrich-modal-cost").textContent =
+        "Free — reads each business's own website. No provider, no credits.";
+      document.getElementById("enrich-modal-email").textContent = "n/a";
+      document.getElementById("enrich-modal-phone").textContent = "n/a";
+      modal.hidden = false;
+      return;
+    }
     const parts = [];
     if (wantsSize && domains) parts.push(`${domains} company lookup${domains === 1 ? "" : "s"}`);
     if (revealEmail && needEmail) parts.push(`up to ${needEmail} email reveal${needEmail === 1 ? "" : "s"}`);

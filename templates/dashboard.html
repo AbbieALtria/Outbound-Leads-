@@ -200,15 +200,17 @@
     <button id="verify-btn" class="button" {{ 'disabled' if not api_key_set or not leads }}
       data-run_id="{{ run_id or '' }}"
       title="Check this pull's phone numbers via Outscraper (costs credits); marks dead lines invalid">Verify phones</button>
-    {% if apollo_enabled %}
+    {# Always offered: the website tier is free and needs no provider. With
+       Apollo absent the reveal flags are forced off, so the button cannot
+       promise anything it can't do. #}
     <button id="enrich-btn" class="button" {{ 'disabled' if not leads }}
       data-run_id="{{ run_id or '' }}"
-      data-reveal-email="{{ '1' if enrich_reveal_email else '0' }}"
-      data-reveal-phone="{{ '1' if enrich_reveal_phone else '0' }}"
+      data-reveal-email="{{ '1' if enrich_reveal_email and apollo_enabled else '0' }}"
+      data-reveal-phone="{{ '1' if enrich_reveal_phone and apollo_enabled else '0' }}"
       data-settings-url="{{ url_for('settings') }}"
-      data-company-size="{{ '1' if offer_wants_company_size else '0' }}"
-      title="Find the decision-maker (name/title, and direct dial if enabled) via Apollo for this pull's leads that have a website">Enrich contacts</button>
-    {% endif %}
+      data-apollo="{{ '1' if apollo_enabled else '0' }}"
+      data-company-size="{{ '1' if offer_wants_company_size and apollo_enabled else '0' }}"
+      title="{% if apollo_enabled %}Find the decision-maker (name/title, and direct dial if enabled) via Apollo and the business's own website{% else %}Read the decision-maker from each business's own website — free, no provider needed{% endif %}">Enrich contacts</button>
     <a class="button primary-outline" href="{{ url_for('export_vicidial', run_id=run_id) }}"
        title="This pull's leads, VICIdial loader format, DNC + invalid phones excluded">VICIdial CSV</a>
     <a class="button" href="{{ url_for('export_csv', run_id=run_id) }}">Export CSV</a>
