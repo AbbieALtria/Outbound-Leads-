@@ -177,6 +177,23 @@ def usage(conn, user_id):
     return total, today
 
 
+def owner_id(conn):
+    """The founding admin account, which other admins may not delete or reset.
+
+    An admin can create more admins, and without this any of them could lock the
+    owner out of their own system — or quietly take it over by resetting the
+    owner's password. Identified as the earliest admin (the seeded one), so it
+    needs no extra column and cannot drift.
+    """
+    row = conn.execute(
+        "SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").fetchone()
+    return row["id"] if row else None
+
+
+def is_owner(conn, user_id):
+    return user_id is not None and user_id == owner_id(conn)
+
+
 def period_usage(conn, user_id, days):
     """Leads this user generated in the last `days` days (a rolling window).
 

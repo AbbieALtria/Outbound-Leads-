@@ -41,9 +41,20 @@
     <span class="badge">{{ u['role'] }}</span>
     {% if u['enabled'] %}<span class="badge badge-ok">active</span>{% else %}<span class="badge badge-hot">disabled</span>{% endif %}
     <span class="u-meta">added {{ u['created_at'][:10] }} · by {{ u['created_by'] }}</span>
+    {# The founding admin is protected from the admins it creates: another admin
+       could otherwise lock the owner out, or take the account over by resetting
+       its password. The routes enforce this too — hiding a button is a courtesy,
+       not a control. #}
+    {% set is_owner = u['id'] == owner_id %}
+    {% set is_me = current_user and u['id'] == current_user['id'] %}
+    {% if is_owner %}<span class="badge" title="Protected: cannot be deleted or disabled by another admin">main admin</span>{% endif %}
     <span class="u-actions">
+      {% if not is_owner or is_me %}
       <form method="post" action="{{ url_for('users_toggle', user_id=u['id']) }}"><button class="button">{{ 'Disable' if u['enabled'] else 'Enable' }}</button></form>
+      {% endif %}
+      {% if not is_owner %}
       <form method="post" action="{{ url_for('users_delete', user_id=u['id']) }}" onsubmit="return confirm('Delete {{ u['username'] }}?')"><button class="danger">Delete</button></form>
+      {% endif %}
     </span>
   </div>
 
@@ -98,6 +109,7 @@
   <p class="dim small" style="margin-top:6px;">Admins are unlimited and can pull for any campaign.</p>
   {% endif %}
 
+  {% if not (u['id'] == owner_id and not (current_user and current_user['id'] == owner_id)) %}
   <details class="u-edit">
     <summary>Reset password</summary>
     <form method="post" action="{{ url_for('users_password', user_id=u['id']) }}" class="u-edit-form"
@@ -108,6 +120,10 @@
       <button type="submit" class="primary">Reset password</button>
     </form>
   </details>
+  {% else %}
+  <p class="dim small" style="margin-top:6px;">Only the main admin can change their own
+    password — use <strong>Password</strong> in the top bar when signed in as them.</p>
+  {% endif %}
 </div>
 {% endfor %}
 

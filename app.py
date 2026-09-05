@@ -346,6 +346,7 @@ def users_page():
         "LEFT JOIN clients cl ON cl.id = c.client_id ORDER BY c.status, c.name"
     ).fetchall()
     return render_template("users.html", users=rows, roles=users.ROLES,
+                           owner_id=users.owner_id(conn),
                            campaigns=campaigns, error=request.args.get("error"))
 
 
@@ -381,6 +382,11 @@ def users_password(user_id):
     if guard:
         return guard
     conn = get_db()
+    # Only the owner may set the owner's password. Otherwise a second admin
+    # could reset it and take the account over silently.
+    if users.is_owner(conn, user_id) and g.user["id"] != user_id:
+        return redirect(url_for("users_page",
+                                error="Only the main admin can change their own password."))
     if not users.set_password(conn, user_id, request.form.get("password", "")):
         return redirect(url_for("users_page", error="Password must be at least 6 characters."))
     return redirect(url_for("users_page"))
@@ -393,6 +399,9 @@ def users_toggle(user_id):
         return guard
     conn = get_db()
     target = users.get(conn, user_id)
+    if users.is_owner(conn, user_id) and g.user["id"] != user_id:
+        return redirect(url_for("users_page",
+                                error="The main admin account can't be disabled."))
     # Never disable the last active admin (would lock everyone out of user mgmt).
     if target and target["role"] == "admin" and target["enabled"] and users.admin_count(conn) <= 1:
         return redirect(url_for("users_page", error="Can't disable the only admin."))
@@ -411,6 +420,9 @@ def users_delete(user_id):
         return redirect(url_for("users_page", error="Can't delete the only admin."))
     if target and target["id"] == g.user["id"]:
         return redirect(url_for("users_page", error="You can't delete your own account."))
+    if users.is_owner(conn, user_id):
+        return redirect(url_for("users_page",
+                                error="The main admin account can't be deleted."))
     users.delete_user(conn, user_id)
     return redirect(url_for("users_page"))
 
