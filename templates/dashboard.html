@@ -228,6 +228,10 @@
       title="{% if apollo_enabled %}Find the decision-maker (name/title, and direct dial if enabled) via Apollo and the business's own website{% else %}Read the decision-maker from each business's own website — free, no provider needed{% endif %}">Enrich contacts</button>
     <a class="button primary-outline" href="{{ url_for('export_vicidial', run_id=run_id) }}"
        title="This pull's leads, VICIdial loader format, DNC + invalid phones excluded">VICIdial CSV</a>
+    {# Same option History has: the pull you are looking at is the one most often
+       exported, so this is where the contact and hook most need to be reachable. #}
+    <a class="button" href="{{ url_for('export_vicidial', run_id=run_id, with_contact=1) }}"
+       title="The same file plus Contact, Contact_Title, Score and Call_Hook — only use this if your VICIdial list is mapped to accept those columns">+ contact &amp; hook</a>
     <a class="button" href="{{ url_for('export_csv', run_id=run_id) }}">Export CSV</a>
   </div>
   {% if out_of_hours %}

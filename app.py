@@ -1142,7 +1142,14 @@ def export_csv():
         leads = [lead for lead in leads if lead["status"] != "dnc"]
     fields = ["business_name", "phone", "address", "city", "state",
               "website", "category", "score", "call_hook", "status",
-              "not_interested_reason", "notes", "pulled_date"]
+              "not_interested_reason", "notes", "pulled_date",
+              # Appended, not inserted, so anything reading the older columns by
+              # position still lines up. Without these the file carried neither
+              # the email nor the decision-maker that enrichment exists to find.
+              # The contact keeps its "(from email)" / "(practice name)" note:
+              # this file is for reviewing, and knowing a name was inferred is
+              # part of judging how far to trust it.
+              "email", "contact", "contact_title"]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
