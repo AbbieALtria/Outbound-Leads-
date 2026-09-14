@@ -1155,8 +1155,12 @@ def export_csv():
     writer.writeheader()
     writer.writerows([dict(lead) for lead in leads])
     name = export_filename(conn, request.args, leads)
+    # With a byte-order mark: this is the file people open in Excel, and Excel
+    # reads a CSV without one as Windows-1252 — every em dash in a call hook
+    # comes out as three characters of junk, and Côté as "CÃ´tÃ©". The app's
+    # own CSV uploads are decoded as utf-8-sig, which strips it again.
     return app.response_class(
-        buf.getvalue(), mimetype="text/csv",
+        "\N{BYTE ORDER MARK}" + buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={name}"},
     )
 
@@ -1272,6 +1276,20 @@ def _street_of(lead):
     return addr.split(",")[0].strip() if addr else ""
 
 
+# The app's typographic punctuation, as plain ASCII, for the columns the contact
+# export adds. The VICIdial file keeps the bytes its loader has always accepted
+# (no byte-order mark, unlike Export CSV), so Excel reads it as Windows-1252 and
+# an em dash comes out as three characters of junk. Plain punctuation reads the
+# same in Excel, in the loader and on the agent's screen.
+_ASCII_PUNCT = str.maketrans({
+    "\N{EM DASH}": "-", "\N{EN DASH}": "-",
+    "\N{LEFT SINGLE QUOTATION MARK}": "'", "\N{RIGHT SINGLE QUOTATION MARK}": "'",
+    "\N{LEFT DOUBLE QUOTATION MARK}": '"', "\N{RIGHT DOUBLE QUOTATION MARK}": '"',
+    "\N{HORIZONTAL ELLIPSIS}": "...", "\N{MIDDLE DOT}": "-",
+    "\N{BULLET}": "-", "\N{NO-BREAK SPACE}": " ",
+})
+
+
 @app.route("/export/vicidial.csv")
 def export_vicidial():
     """Dial-ready export matching the client's VICIdial upload (the red-tagged
@@ -1329,11 +1347,12 @@ def export_vicidial():
             # stripped here.
             contact = re.sub(r"\s*\((?:from email|practice name)\)\s*$", "",
                              lead["contact"] or "").strip()
-            row.update({"Contact": contact,
-                        "Contact_Title": (lead["contact_title"] if "contact_title"
-                                          in lead.keys() else "") or "",
+            contact_title = (lead["contact_title"] if "contact_title"
+                             in lead.keys() else "") or ""
+            row.update({"Contact": contact.translate(_ASCII_PUNCT),
+                        "Contact_Title": contact_title.translate(_ASCII_PUNCT),
                         "Score": lead["score"],
-                        "Call_Hook": lead["call_hook"]})
+                        "Call_Hook": (lead["call_hook"] or "").translate(_ASCII_PUNCT)})
         if include_cbt:
             cbt = cb_by_phone.get(normalize_phone(lead["phone"]))
             row["Callback_Time"] = str(cbt)[:16] if cbt else ""

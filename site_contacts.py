@@ -72,6 +72,12 @@ NOT_NAMES = {
     "privacy policy", "terms of", "all rights", "family dentistry", "general dentistry",
     "dental care", "customer service", "emergency service", "free consultation",
 }
+# Words a capitalised pair can start with that no person's name does. On real
+# sites these produced "Hi Steven" from an owner's reply to a review, where the
+# greeting is the only thing that made it look like a name.
+NOT_FIRST = {"hi", "hello", "hey", "dear", "thanks", "thank", "welcome", "meet",
+             "and", "or", "the", "our", "your", "by", "from", "with", "for", "to",
+             "at", "in", "of"}
 
 
 def _clean(text):
@@ -81,6 +87,8 @@ def _clean(text):
 def _looks_like_name(name):
     low = name.lower()
     if any(bad in low for bad in NOT_NAMES):
+        return False
+    if low.split()[0] in NOT_FIRST:
         return False
     # Reject if a word is a known title/credential rather than a name part.
     parts = low.split()
@@ -124,22 +132,41 @@ def extract_people(text):
             found.append({"name": f"{honorific} {name}", "title": "", "rank": 1})
 
     # 2. "Firstname Lastname, DDS" / ", MD" — credentialed principal.
-    cred = "|".join(CREDENTIALS)
-    for m in re.finditer(r"\b(" + NAME_RE + r")\s*,\s*(" + cred + r")\b", text, re.I):
+    # Case matters on both sides of the comma. The name must be capitalised the
+    # way a name is: matched case-blind, "keep costs down, do not wait" read as
+    # a person called "costs down" with the title DO. The longer credentials are
+    # accepted in any case ("Dds", "BSc", "PhD"); the two-letter ones only in
+    # capitals, because in lower case "do", "od" and "dc" are ordinary text.
+    cred = ("(?i:" + "|".join(c for c in CREDENTIALS if len(c) > 2) + ")|"
+            + "|".join(c.upper() for c in CREDENTIALS if len(c) <= 2))
+    for m in re.finditer(r"\b(" + NAME_RE + r")\s*,\s*(" + cred + r")\b", text):
         name = _clean(m.group(1))
         if _looks_like_name(name) and name.lower() not in seen:
             seen.add(name.lower())
             found.append({"name": name, "title": m.group(2).upper(), "rank": 2})
 
     # 3. A name sitting next to an explicit decision-maker title, either order.
-    tit = "|".join(re.escape(t) for t in TITLES)
+    # Only the title itself is case-blind ("Owner", "OWNER", "office manager").
+    # The name is held to capitals as in pass 2, and the words a title may run
+    # on into must be lower case ("Owner and lead dentist") — case-blind, they
+    # swallowed the next person's name, and "senior-level counsel" passed as
+    # somebody.
+    # The title must also end at a word boundary ("Partnership with purpose" is
+    # not a partner), a bare hyphen separates only when spaced (so a headline's
+    # "President-Elect Designate" is not a president called Elect Designate),
+    # and a run-on that stops on a joining word is trimmed ("Owner of" ->
+    # "Owner").
+    tit = "(?i:" + "|".join(re.escape(t) for t in TITLES) + r")\b"
+    after_name = r"(?:\s*[,–—|]\s*|\s+-\s+)"
+    after_title = r"(?:\s*[:–—|]\s*|\s+-\s+)"
     for pat, ni, ti in (
-        (r"\b(" + NAME_RE + r")\s*[,–—\-–—|]\s*((?:" + tit + r")[a-z ]{0,20})", 1, 2),
-        (r"\b((?:" + tit + r")[a-z ]{0,20})\s*[:–—\-–—|]\s*(" + NAME_RE + r")", 2, 1),
+        (r"\b(" + NAME_RE + r")" + after_name + r"((?:" + tit + r")[a-z ]{0,20})", 1, 2),
+        (r"\b((?:" + tit + r")[a-z ]{0,20})" + after_title + r"(" + NAME_RE + r")", 2, 1),
     ):
-        for m in re.finditer(pat, text, re.I):
+        for m in re.finditer(pat, text):
             name = _clean(m.group(ni))
-            title = _clean(m.group(ti)).title()
+            title = re.sub(r"(?:\s+(?:of|and|for|at|the|in|with))+$", "",
+                           _clean(m.group(ti))).title()
             if _looks_like_name(name) and name.lower() not in seen:
                 seen.add(name.lower())
                 found.append({"name": name, "title": title, "rank": 0})
