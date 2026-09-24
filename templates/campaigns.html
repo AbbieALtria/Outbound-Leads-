@@ -12,6 +12,9 @@
     actually choose them (and can sweep several cities) on the Dashboard at pull time,
     so one campaign can cover many cities/industries over time.
   </p>
+  <p class="dim small">Lead generation is <strong>deduped per campaign</strong>: re-running a
+  pull (weekly or on demand) never repeats a business already in this campaign — it only
+  adds new ones. The same business can still be a lead for a different client's campaign.</p>
   {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
 
   {% if current_user and current_user['role'] == 'admin' %}

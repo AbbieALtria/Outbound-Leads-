@@ -90,11 +90,14 @@ def parse_log(text):
 
 def apply_outcomes(conn, outcomes):
     """Write parsed outcomes to the leads table. Returns a summary dict."""
+    # A phone can now map to several leads (one per campaign, since dedupe is
+    # per-campaign). The call log carries no campaign, so an outcome applies to
+    # every lead row sharing the number.
     existing = {}
     for row in conn.execute("SELECT id, phone, status FROM leads"):
         norm = normalize_phone(row["phone"])
         if norm:
-            existing[norm] = (row["id"], row["status"])
+            existing.setdefault(norm, []).append((row["id"], row["status"]))
 
     summary = {"updated": 0, "kept": 0, "dnc_blocked": 0, "unmatched": 0}
     now = db.now_iso()
@@ -107,20 +110,20 @@ def apply_outcomes(conn, outcomes):
 
     for phone, status in outcomes.items():
         if phone in existing:
-            lead_id, current = existing[phone]
-            # dnc always wins; other outcomes only fill in new/called leads
-            if status == "dnc":
-                overwrite = current != "dnc"
-            else:
-                overwrite = current in ("new", "called") and current != status
-            if overwrite:
-                conn.execute(
-                    "UPDATE leads SET status = ?, status_updated_at = ? WHERE id = ?",
-                    (status, now, lead_id),
-                )
-                summary["updated"] += 1
-            else:
-                summary["kept"] += 1
+            touched = False
+            for lead_id, current in existing[phone]:
+                # dnc always wins; other outcomes only fill in new/called leads
+                if status == "dnc":
+                    overwrite = current != "dnc"
+                else:
+                    overwrite = current in ("new", "called") and current != status
+                if overwrite:
+                    conn.execute(
+                        "UPDATE leads SET status = ?, status_updated_at = ? WHERE id = ?",
+                        (status, now, lead_id),
+                    )
+                    touched = True
+            summary["updated" if touched else "kept"] += 1
         elif status == "dnc":
             # Unknown number that asked not to be called: block it forever.
             conn.execute(

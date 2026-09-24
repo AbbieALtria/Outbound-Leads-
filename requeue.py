@@ -57,9 +57,11 @@ def _ensure_lead(conn, d, phone10, batch_date, campaign_id=None):
             postcode = m.group(1)
     email = (d.get("email") or "").strip()
 
+    # Per-campaign dedupe: match this campaign's row for the number, not any row.
     row = conn.execute(
-        "SELECT id, business_name, lead_source, campaign_id FROM leads WHERE phone = ?",
-        (stored,)).fetchone()
+        "SELECT id, business_name, lead_source, campaign_id FROM leads "
+        "WHERE phone = ? AND IFNULL(campaign_id, 0) = IFNULL(?, 0)",
+        (stored, campaign_id)).fetchone()
     if row:
         # Backfill a VICIdial-registered lead that was saved thin before this
         # mapping existed (never touch app-generated leads).
@@ -81,7 +83,9 @@ def _ensure_lead(conn, d, phone10, batch_date, campaign_id=None):
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'vicidial', 'b2b', ?)",
         (stored, name, address, city, region, postcode, email, batch_date, campaign_id, status),
     )
-    return conn.execute("SELECT id FROM leads WHERE phone = ?", (stored,)).fetchone()["id"]
+    return conn.execute(
+        "SELECT id FROM leads WHERE phone = ? AND IFNULL(campaign_id, 0) = IFNULL(?, 0)",
+        (stored, campaign_id)).fetchone()["id"]
 
 try:
     from zoneinfo import ZoneInfo
@@ -99,11 +103,14 @@ def process(conn, dispositions, day=None, dry_run=False):
     day `day` (the redial-batch key). Returns a summary. Idempotent: re-running
     the same day yields the same state."""
     day = day or today_est()
-    lead_by_phone = {}
-    for row in conn.execute("SELECT id, phone FROM leads"):
+    # Dedupe is per-campaign, so a phone can map to several leads (one per campaign).
+    # Cache lead ids keyed by (phone, campaign bucket) — IFNULL(campaign_id,0) matches
+    # the idx_leads_phone_campaign index.
+    lead_by_key = {}
+    for row in conn.execute("SELECT id, phone, campaign_id FROM leads"):
         p = normalize_phone(row["phone"])
         if p:
-            lead_by_phone[p] = row["id"]
+            lead_by_key[(p, row["campaign_id"] or 0)] = row["id"]
 
     summary = {"processed": 0, "requeued": 0, "exhausted": 0,
                "suppressed": 0, "dnc": 0, "unmatched": 0, "ignored": 0,
@@ -134,12 +141,13 @@ def process(conn, dispositions, day=None, dry_run=False):
             if not dry_run:
                 dnc.add_numbers(conn, [phone], source="vicidial",
                                 reason=f"{status} - do not call")
-                lead_id = lead_by_phone.get(phone)
-                if lead_id:
-                    conn.execute(
-                        "UPDATE leads SET status = 'dnc', status_updated_at = ? WHERE id = ?",
-                        (now, lead_id),
-                    )
+                # DNC is global: flag EVERY lead with this phone, across all campaigns.
+                for (p, _camp), lid in lead_by_key.items():
+                    if p == phone:
+                        conn.execute(
+                            "UPDATE leads SET status = 'dnc', status_updated_at = ? WHERE id = ?",
+                            (now, lid),
+                        )
             continue
 
         if status in ops_dispositions.SUPPRESS_CODES:      # YPNI
@@ -169,11 +177,12 @@ def process(conn, dispositions, day=None, dry_run=False):
             # the redial lead stays tied to the same client/industry/offer.
             camp = db.campaign_by_vici(conn, campaign)
             camp_id = camp["id"] if camp else None
-            # Source-agnostic: if we didn't generate this number, register it from
-            # VICIdial's own record so the segmented dial export can re-serve it.
-            lead_id = (lead_by_phone.get(phone)
+            # Look up (or create) the lead for THIS campaign — dedupe is per-campaign,
+            # so the same phone under a different campaign is a different lead.
+            key = (phone, camp_id or 0)
+            lead_id = (lead_by_key.get(key)
                        or _ensure_lead(conn, d, phone, day, campaign_id=camp_id))
-            lead_by_phone[phone] = lead_id
+            lead_by_key[key] = lead_id
             # Keep a manual 'excluded' decision sticky; otherwise set active/exhausted.
             conn.execute(
                 "INSERT INTO requeue_leads (lead_id, last_disposition, attempt_count, state, campaign, batch_date, updated_at) "

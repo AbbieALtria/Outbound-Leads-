@@ -477,7 +477,10 @@ USER_EXTRA_COLUMNS = {
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY,
-    phone TEXT UNIQUE NOT NULL,
+    -- Dedupe is PER CAMPAIGN: the same business (phone) may be a separate lead for
+    -- two clients' campaigns, but never pulled twice within one campaign. Uniqueness
+    -- is enforced by idx_leads_phone_campaign below, not a single-column constraint.
+    phone TEXT NOT NULL,
     business_name TEXT NOT NULL,
     address TEXT NOT NULL DEFAULT '',
     city TEXT NOT NULL DEFAULT '',
@@ -494,6 +497,8 @@ CREATE TABLE IF NOT EXISTS leads (
 );
 CREATE INDEX IF NOT EXISTS idx_leads_pulled_date ON leads(pulled_date);
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
+-- Per-campaign uniqueness index (idx_leads_phone_campaign) is created in init_db()
+-- after the campaign_id column is ensured, since it references that column.
 
 CREATE TABLE IF NOT EXISTS cities (
     id INTEGER PRIMARY KEY,
@@ -799,11 +804,24 @@ def mark_alert_seen(conn, alert_id):
 def init_db(db_path=DB_FILE):
     """Create schema, seed defaults, and run the one-time migration."""
     conn = connect(db_path)
+    # Foreign keys OFF for the whole migration: rebuilding `leads` (rename + recreate
+    # + copy + drop) must not fire ON DELETE CASCADE on child tables like
+    # requeue_leads. Re-enabled at the end, outside any transaction. Standard SQLite
+    # table-rebuild pattern.
+    conn.execute("PRAGMA foreign_keys = OFF")
     # Rename the old offer table (campaigns->offers) BEFORE the schema runs, so the
     # CREATE TABLE for the new engagement `campaigns` builds a fresh table.
     _migrate_campaigns_to_offers(conn)
+    # Rename a legacy single-phone-unique leads table aside so executescript rebuilds
+    # it without that constraint (dedupe becomes per-campaign). No-op on fresh DBs.
+    _migrate_leads_dedupe(conn)
     conn.executescript(SCHEMA)
     _ensure_lead_columns(conn)
+    # Now that campaign_id exists, add the per-campaign uniqueness index and finish
+    # copying rows back from the renamed legacy table (if any).
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_phone_campaign "
+                 "ON leads(phone, IFNULL(campaign_id, 0))")
+    _finish_leads_rebuild(conn)
     _ensure_columns(conn, "pull_runs", PULL_RUN_EXTRA_COLUMNS)
     _ensure_columns(conn, "offers", OFFER_EXTRA_COLUMNS)
     _ensure_columns(conn, "requeue_leads", REQUEUE_EXTRA_COLUMNS)
@@ -854,6 +872,9 @@ def init_db(db_path=DB_FILE):
     )
 
     conn.commit()
+    # Re-enable FK enforcement now that the rebuild is committed (must be outside a
+    # transaction to take effect). foreign_key_check surfaces any orphaned refs.
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.close()
 
 
@@ -875,6 +896,40 @@ def _migrate_campaigns_to_offers(conn):
     cols = table_columns(conn, "campaigns")
     if "rules" in cols:                       # old offer shape -> rename in place
         conn.execute("ALTER TABLE campaigns RENAME TO offers")
+
+
+def _migrate_leads_dedupe(conn):
+    """One-time, idempotent: the legacy leads table enforced ONE phone globally
+    (inline `phone UNIQUE`). Dedupe is now per-campaign, so rename that table aside
+    and let the schema rebuild `leads` without the single-column constraint;
+    _finish_leads_rebuild() copies the rows back. No-op on fresh or already-migrated
+    databases (detected by the presence of idx_leads_phone_campaign)."""
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type IN ('table','index')")}
+    if "leads" not in names or "_leads_old" in names:
+        return
+    if "idx_leads_phone_campaign" in names:   # already on the per-campaign model
+        return
+    # legacy_alter_table keeps child FK references pointing at "leads" (which the
+    # schema recreates) instead of following the rename to _leads_old.
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute("ALTER TABLE leads RENAME TO _leads_old")
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+
+
+def _finish_leads_rebuild(conn):
+    """Copy rows from the renamed legacy leads table into the rebuilt one, then drop
+    it. Copies the intersection of columns (ids preserved, so requeue FKs stay valid)
+    so any current/future column carries over without being named here."""
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "_leads_old" not in names:
+        return
+    old_cols = [r[1] for r in conn.execute("PRAGMA table_info(_leads_old)")]
+    new_cols = [r[1] for r in conn.execute("PRAGMA table_info(leads)")]
+    common = ", ".join(c for c in new_cols if c in old_cols)
+    conn.execute(f"INSERT INTO leads ({common}) SELECT {common} FROM _leads_old")
+    conn.execute("DROP TABLE _leads_old")
 
 
 def _seed_offers(conn):

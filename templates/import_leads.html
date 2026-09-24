@@ -10,9 +10,21 @@
     common names work (name, phone, email, city, state, zip, product/interest, consent, source).</p>
 
     <form method="post" enctype="multipart/form-data" class="inline-form">
+      <label class="dim small">into campaign
+        <select name="campaign_id">
+          <option value="">— none (unassigned) —</option>
+          {% for c in b2c_campaigns %}
+          <option value="{{ c['id'] }}">{{ c['client_name'] or 'No client' }} · {{ c['name'] }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <input type="file" name="file" accept=".csv,text/csv" required>
       <button type="submit" class="primary">Import</button>
     </form>
+    {% if not b2c_campaigns %}
+    <p class="dim small">Tip: create a <a href="{{ url_for('campaigns_page') }}">B2C campaign</a>
+    (an offer with a B2C audience, no industry) to attach these leads to a client with full history.</p>
+    {% endif %}
 
     {% if error %}<p class="pull-result err">{{ error }}</p>{% endif %}
 
@@ -48,8 +60,12 @@
   "consent": true,
   "consent_at": "2026-07-16T10:22:00Z",
   "source": "PX",
-  "campaign": "solar"
+  "campaign_id": 3
 }</pre>
+    <p class="dim small">Attach to a client by passing <code>campaign_id</code> (from the
+    <a href="{{ url_for('campaigns_page') }}">Campaigns</a> page) or the client's
+    <code>vici_campaign_id</code>. Or pass <code>"campaign": "&lt;offer-slug&gt;"</code> to only
+    set the scoring offer. Omit all to leave the lead unassigned.</p>
     {% if intake_enabled %}
       <p class="badge badge-ok">intake enabled</p>
     {% else %}
