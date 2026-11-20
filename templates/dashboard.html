@@ -61,6 +61,12 @@
             data-known='{{ known_by_state|tojson }}'
             data-last-city="{{ pre_city }}"></select>
     <input id="pull-city-new" class="geo" type="text" placeholder="Type city" autocomplete="off" hidden>
+    {# Optional: one or more postal / ZIP codes. Each becomes its own search area
+       (narrower than a city, so it also surfaces businesses past Maps' result cap).
+       Replaces the city sweep when filled. #}
+    <input id="pull-postcodes" class="geo" type="text" style="width:170px;"
+           placeholder="ZIP / postal code(s)" autocomplete="off"
+           title="Optional. Comma-separated ZIP (US) or postal codes (Canada: M5V or M5V 2T6). Each code is searched separately inside the selected country.">
     {# Second discovery source. Only meaningful for licensed US healthcare provider
        types, so JS hides this unless the picked industry is one of them. #}
     <span id="source-wrap" hidden>

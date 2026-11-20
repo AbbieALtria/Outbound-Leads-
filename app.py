@@ -2004,7 +2004,8 @@ def start_pull():
     def _clean_loc(l):
         return {"city": (l.get("city") or "").strip(),
                 "state": (l.get("state") or "").strip(),
-                "country": (l.get("country") or "").strip()}
+                "country": (l.get("country") or "").strip(),
+                "postcode": (l.get("postcode") or "").strip()}
 
     raw_locs = payload.get("locations")
     locations = None
@@ -2012,13 +2013,35 @@ def start_pull():
         locations = [_clean_loc(l) for l in raw_locs
                      if isinstance(l, dict) and (l.get("city") or l.get("state"))]
     single = _clean_loc(payload.get("location") or {})
-    location = single if (single["city"] or single["state"]) else None
+    location = single if (single["city"] or single["state"] or single["postcode"]) else None
+
+    # Postal / ZIP codes typed on the dashboard (one or many). Each valid code
+    # becomes its own search area, inside the chosen country (and city/state when
+    # picked) — a ZIP sweep is how a pull gets past Maps' per-area result cap.
+    # When codes are given they replace the city sweep rather than multiply it.
+    raw_postcodes = (payload.get("postcodes") or "").strip()
+    if raw_postcodes:
+        pc_country = ((location or {}).get("country")
+                      or next((l["country"] for l in (locations or []) if l.get("country")), "")
+                      or (payload.get("country") or "").strip())
+        codes, bad = pipeline.parse_postcodes(pc_country, raw_postcodes)
+        if bad:
+            hint = pipeline.postcode_hint(pc_country)
+            return jsonify({"error": "Not a valid postal code for "
+                            f"{pc_country or 'this country'}: {', '.join(bad[:5])}"
+                            + (f" ({hint})" if hint else "")}), 400
+        if codes:
+            base = location or {"city": "", "state": "", "country": pc_country}
+            locations = [{"city": base.get("city", ""), "state": base.get("state", ""),
+                          "country": base.get("country", pc_country), "postcode": c}
+                         for c in codes]
+            location = None
 
     if not locations and not location:
         # No explicit location: only allowed if there are saved cities to fall back on.
         if not conn.execute("SELECT 1 FROM cities WHERE enabled = 1 LIMIT 1").fetchone():
-            return jsonify({"error": "Enter a City and State to pull from "
-                            "(or add several under Multiple locations)."}), 400
+            return jsonify({"error": "Enter a City and State (or postal/ZIP codes) "
+                            "to pull from, or add several under Multiple locations."}), 400
     if location:
         # Remember the single location so the inputs pre-fill next time.
         for key, setting in (("city", "last_city"), ("state", "last_state"),

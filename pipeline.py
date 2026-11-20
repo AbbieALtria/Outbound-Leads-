@@ -784,6 +784,54 @@ def _dead_markets(conn, industry_slugs):
     return dead
 
 
+# --- postal / ZIP code search -------------------------------------------------
+# Per-country shape of a postal code. A search by postal code is far narrower than
+# a whole city, which both (a) reaches businesses past Google Maps' ~120-results
+# cap per search area and (b) lets a campaign target a specific territory.
+_POSTCODE_PATTERNS = {
+    "united states": (r"\d{5}(?:-\d{4})?", "5-digit ZIP, e.g. 90210"),
+    "canada": (r"[A-Z]\d[A-Z](?: ?\d[A-Z]\d)?",
+               "postal code like M5V or M5V 2T6"),
+}
+# Any other country: 3-10 letters/digits (spaces and hyphens allowed inside).
+_GENERIC_POSTCODE = r"[A-Z0-9][A-Z0-9 \-]{1,8}[A-Z0-9]"
+
+
+def parse_postcodes(country, raw):
+    """Split a free-text box ('90210, 90211 90212') into (valid, invalid) lists.
+
+    Separators are commas, semicolons, newlines or the Canadian-safe rule that
+    a space only splits two ZIPs (a Canadian 'M5V 2T6' keeps its internal space).
+    Valid codes are upper-cased and de-duplicated, order preserved."""
+    text = (raw or "").strip().upper()
+    if not text:
+        return [], []
+    key = (country or "").strip().lower()
+    pattern, _hint = _POSTCODE_PATTERNS.get(key, (_GENERIC_POSTCODE, ""))
+    parts = re.split(r"[,;\n]+", text)
+    # Spaces separate codes only for countries whose codes contain no space
+    # (US ZIPs); otherwise 'M5V 2T6' would be torn into two bad pieces.
+    if key == "united states":
+        parts = [q for p in parts for q in p.split()]
+    valid, invalid, seen = [], [], set()
+    for part in parts:
+        code = re.sub(r"\s+", " ", part).strip()
+        if not code:
+            continue
+        if re.fullmatch(pattern, code):
+            if code not in seen:
+                seen.add(code)
+                valid.append(code)
+        else:
+            invalid.append(code)
+    return valid, invalid
+
+
+def postcode_hint(country):
+    return _POSTCODE_PATTERNS.get((country or "").strip().lower(),
+                                  ("", "3-10 letters/digits"))[1]
+
+
 def _plan_locations(conn, targets, industry_slugs):
     """Decide what order to visit the selected locations in.
 
@@ -880,10 +928,15 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
             c = (l.get("city") or "").strip()
             s = (l.get("state") or "").strip()
             co = (l.get("country") or "").strip()
-            if c or s:
-                label = ", ".join(p for p in (c, s, co) if p)
+            pc = (l.get("postcode") or "").strip()
+            if c or s or pc:
+                # Postal code goes FIRST in the label: it is the narrowest part
+                # of the query, and _dead_markets() reads the text before the
+                # first comma as the "city" — so one barren ZIP can never mark
+                # the whole city as dead.
+                label = ", ".join(p for p in (pc, c, s, co) if p)
                 explicit.append({"label": label, "city": c, "state": s,
-                                 "country": co, "db_id": None})
+                                 "country": co, "postcode": pc, "db_id": None})
         if explicit:
             targets = explicit
         else:
@@ -1181,6 +1234,10 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                 validation_note = f"; phone validation failed ({e})"
                 log(f"  WARNING: {e}")
 
+        # Default first: `status = "done"` below sits inside `if places_seen`, so a
+        # pull that fetched zero records (a narrow ZIP with nothing in it) used to
+        # hit an unbound `status` and the run never closed cleanly.
+        status = "done"
         if cancelled:
             message = f"Stopped by user after adding {added_total} leads{validation_note}"
             status = "cancelled"

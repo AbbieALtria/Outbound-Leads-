@@ -387,6 +387,13 @@ if (pullBtn) {
           city: currentCity(),
         };
       }
+      // Optional ZIP / postal codes: sent as raw text, validated per country on
+      // the server (which also reports which code was rejected).
+      const pcEl = document.getElementById("pull-postcodes");
+      if (pcEl && pcEl.value.trim()) {
+        payload.postcodes = pcEl.value.trim();
+        payload.country = (document.getElementById("pull-country") || {}).value || "";
+      }
       await postJSON("/api/pull", payload);
       poll();
     } catch (e) {
