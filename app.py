@@ -32,6 +32,7 @@ import intent_signals
 import geo_data
 import leads_intake
 import ops_dispositions
+import outcome_report
 import pipeline
 import requeue
 import scoring
@@ -325,6 +326,22 @@ def _require_admin():
     if not users.auth_enabled(get_db()):
         return None
     return redirect(url_for("dashboard"))
+
+
+@app.route("/reports/outcomes")
+def outcome_report_page():
+    """Admin-only, read-only: per campaign, how each scoring signal's leads
+    fared on the phone, with suggested point values. Changes nothing; an admin
+    applies a suggestion by editing the offer in Settings."""
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    sel = (request.args.get("campaign_id") or "").strip()
+    reports = outcome_report.report(conn, int(sel) if sel.isdigit() else None)
+    campaigns = conn.execute("SELECT id, name FROM campaigns ORDER BY name").fetchall()
+    return render_template("outcome_report.html", reports=reports, campaigns=campaigns,
+                           selected_id=sel, min_sample=outcome_report.MIN_SAMPLE)
 
 
 @app.route("/users")
