@@ -45,6 +45,9 @@ def pull(tmp_path, monkeypatch):
     db.init_db(path)
     monkeypatch.setattr(pipeline, "check_new_websites", lambda *a, **k: None)
     monkeypatch.setattr(pipeline.time, "sleep", lambda *_: None)
+    # phone_validation now defaults ON for fresh databases; without this the pull
+    # calls Outscraper's phones-enricher for real. Tests must never hit the network.
+    monkeypatch.setattr(pipeline, "validate_phones", lambda *a, **k: {})
 
     def run(places_by_query, **where):
         def fake_outscraper(api_key, query_text, limit, enrich_contacts=False):
