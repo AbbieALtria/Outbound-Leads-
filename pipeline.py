@@ -795,29 +795,33 @@ _POSTCODE_PATTERNS = {
 }
 # Any other country: 3-10 letters/digits (spaces and hyphens allowed inside).
 _GENERIC_POSTCODE = r"[A-Z0-9][A-Z0-9 \-]{1,8}[A-Z0-9]"
+# Countries whose postal codes contain a space ('M5V 2T6', 'SW1A 1AA', '1012 AB',
+# 'D02 X285'). Everywhere else a space can only be separating two codes.
+_SPACED_POSTCODE_COUNTRIES = {"canada", "united kingdom", "netherlands", "ireland"}
 
 
 def parse_postcodes(country, raw):
     """Split a free-text box ('90210, 90211 90212') into (valid, invalid) lists.
 
-    Separators are commas, semicolons, newlines or the Canadian-safe rule that
-    a space only splits two ZIPs (a Canadian 'M5V 2T6' keeps its internal space).
-    Valid codes are upper-cased and de-duplicated, order preserved."""
+    Separators are commas, semicolons, newlines, and spaces except in countries
+    whose codes themselves contain one (a Canadian 'M5V 2T6' keeps its space).
+    Valid codes are upper-cased, normalised and de-duplicated, order preserved."""
     text = (raw or "").strip().upper()
     if not text:
         return [], []
     key = (country or "").strip().lower()
     pattern, _hint = _POSTCODE_PATTERNS.get(key, (_GENERIC_POSTCODE, ""))
     parts = re.split(r"[,;\n]+", text)
-    # Spaces separate codes only for countries whose codes contain no space
-    # (US ZIPs); otherwise 'M5V 2T6' would be torn into two bad pieces.
-    if key == "united states":
+    if key not in _SPACED_POSTCODE_COUNTRIES:
         parts = [q for p in parts for q in p.split()]
     valid, invalid, seen = [], [], set()
     for part in parts:
         code = re.sub(r"\s+", " ", part).strip()
         if not code:
             continue
+        if key == "canada":
+            # 'M5V2T6' and 'M5V 2T6' are the same area: one search, not two.
+            code = re.sub(r"^([A-Z]\d[A-Z]) ?(\d[A-Z]\d)$", r"\1 \2", code)
         if re.fullmatch(pattern, code):
             if code not in seen:
                 seen.add(code)
@@ -1149,7 +1153,11 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                                 slug, score, hook, today,
                                 email,
                                 extract_contact(place),
-                                extract_postcode(place, address),
+                                # Non-US places often come back without a postal
+                                # code; a ZIP/postal-code sweep still knows the
+                                # area it searched, so stamp that as the fallback.
+                                (extract_postcode(place, address)
+                                 or target_loc.get("postcode", "")),
                                 query_text, run_id, campaign_id,
                                 0 if needs_phone else 1,
                                 reviews, rating, unclaimed,

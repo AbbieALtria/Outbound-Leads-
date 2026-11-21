@@ -2020,9 +2020,14 @@ def start_pull():
     # picked) — a ZIP sweep is how a pull gets past Maps' per-area result cap.
     # When codes are given they replace the city sweep rather than multiply it.
     raw_postcodes = (payload.get("postcodes") or "").strip()
+    remembered = location    # the typed single location, saved below for pre-fill
     if raw_postcodes:
+        if locations:
+            # Codes would silently throw the ticked cities away; make the user
+            # choose rather than guess which set they meant.
+            return jsonify({"error": "Postal/ZIP codes can't be combined with cities "
+                            "ticked under Multiple locations. Clear one of them."}), 400
         pc_country = ((location or {}).get("country")
-                      or next((l["country"] for l in (locations or []) if l.get("country")), "")
                       or (payload.get("country") or "").strip())
         codes, bad = pipeline.parse_postcodes(pc_country, raw_postcodes)
         if bad:
@@ -2042,11 +2047,12 @@ def start_pull():
         if not conn.execute("SELECT 1 FROM cities WHERE enabled = 1 LIMIT 1").fetchone():
             return jsonify({"error": "Enter a City and State (or postal/ZIP codes) "
                             "to pull from, or add several under Multiple locations."}), 400
-    if location:
-        # Remember the single location so the inputs pre-fill next time.
+    if remembered:
+        # Remember the single location so the inputs pre-fill next time — also
+        # when codes turned it into a ZIP sweep, since the pickers were still used.
         for key, setting in (("city", "last_city"), ("state", "last_state"),
                              ("country", "last_country")):
-            db.set_setting(conn, setting, location[key])
+            db.set_setting(conn, setting, remembered[key])
         conn.commit()
 
     if not _pull_lock.acquire(blocking=False):
