@@ -371,8 +371,10 @@ DEFAULT_SETTINGS = {
     # Outscraper credits per lead; turn off in Settings if not worth it.
     "contact_enrichment": "1",
     # Validate each new lead's phone (line type + drop dead numbers) during the
-    # pull. Costs extra Outscraper credits per number; off by default.
-    "phone_validation": "0",
+    # pull. Costs extra Outscraper credits per number. ON for new installs; a
+    # database that predates the setting keeps OFF (see init_db), and a saved
+    # choice is never changed.
+    "phone_validation": "1",
     # Mine each new lead's Google reviews (earliest review date + recent review
     # text) to power the new_in_market / review_pain_match signals. Outscraper
     # prices reviews SEPARATELY (~$3 per 1,000 reviews); off by default.
@@ -451,6 +453,10 @@ LEAD_EXTRA_COLUMNS = {
     "place_id": "TEXT NOT NULL DEFAULT ''",             # Google's listing id
     "site_key": "TEXT NOT NULL DEFAULT ''",             # website domain | street (or postcode)
     "name_key": "TEXT NOT NULL DEFAULT ''",             # normalised name | postcode
+    # Email deliverability (email_verify.py): valid / risky / catch_all /
+    # invalid / unknown, '' = never checked. Exports leave out an invalid email.
+    "email_status": "TEXT NOT NULL DEFAULT ''",
+    "email_checked_at": "TEXT",
 }
 
 # Extra columns on pull_runs added after first release.
@@ -827,6 +833,14 @@ def init_db(db_path=DB_FILE):
         "CREATE INDEX IF NOT EXISTS idx_leads_name_key ON leads(name_key)",
     ):
         conn.execute(ddl)
+
+    # phone_validation defaults ON, but only for a NEW install. A database that
+    # already holds leads yet has no saved value predates the setting and was
+    # running with it off, so it stays off rather than starting to spend credits
+    # on the next pull. A value the user saved is untouched either way.
+    if (get_setting(conn, "phone_validation") is None
+            and conn.execute("SELECT 1 FROM leads LIMIT 1").fetchone()):
+        set_setting(conn, "phone_validation", "0")
 
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))

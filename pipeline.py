@@ -440,11 +440,26 @@ def collect_review_signals(conn, lead_ids, api_key, log=print):
     return done
 
 
-def validate_phones(api_key, phones):
+def _phone_key(phone):
+    """Digits only, with a North American leading country code dropped, so
+    '(281) 236-8208' and Outscraper's echo '12812368208' compare equal."""
+    d = re.sub(r"\D", "", phone or "")
+    return d[1:] if len(d) == 11 and d.startswith("1") else d
+
+
+def validate_phones(api_key, phones, log=print):
     """Validate a batch of phone numbers via Outscraper's phones-enricher.
     Returns {original_phone: {"type": <line type>, "valid": bool, "carrier": str}}.
     A number Outscraper can't identify a carrier for is treated as invalid.
-    Raises RuntimeError on API failure so callers can surface it."""
+    Raises RuntimeError on API failure so callers can surface it.
+
+    Each result item echoes the number it answers for in `query` (per the
+    phones-enricher docs), so results are matched on that, never on position:
+    a dropped or reordered item would otherwise stamp a lead with its
+    neighbour's line type and could mark a live number dead. Position is
+    trusted only when no item carries a query AND the counts agree; a chunk
+    that can't be paired up is skipped with a warning and its numbers stay
+    unvalidated (phone_valid untouched) rather than guessed."""
     phones = [p for p in phones if p]
     if not phones:
         return {}
@@ -463,11 +478,37 @@ def validate_phones(api_key, phones):
                 f"Phone validation failed (status {resp.status_code}): {resp.text[:200]}"
             )
         data = resp.json()
-        rows = data.get("data", data)
+        rows = data.get("data", data) if isinstance(data, dict) else data
         flat = []
-        for item in rows:
+        for item in rows or []:
             flat.extend(item if isinstance(item, list) else [item])
-        for original, row in zip(chunk, flat):
+        flat = [row for row in flat if isinstance(row, dict)]
+
+        by_key = {_phone_key(p): p for p in chunk}
+        pairs, unkeyed, strays = [], [], 0
+        for row in flat:
+            echoed = row.get("query") or row.get("phone") or ""
+            if not echoed:
+                unkeyed.append(row)
+                continue
+            original = by_key.get(_phone_key(str(echoed)))
+            if original is None:
+                strays += 1
+            else:
+                pairs.append((original, row))
+        if unkeyed and not pairs:
+            if len(flat) == len(chunk):
+                pairs = list(zip(chunk, flat))     # old-style answer; counts agree
+            else:
+                log(f"  WARNING: phone validation returned {len(flat)} results for "
+                    f"{len(chunk)} numbers with nothing to match them on; "
+                    f"skipping these {len(chunk)} numbers")
+                continue
+        elif unkeyed or strays:
+            log(f"  WARNING: phone validation: ignoring {len(unkeyed)} result(s) "
+                f"without a number and {strays} for numbers not asked about")
+
+        for original, row in pairs:
             carrier_type = (row.get("carrier_type") or "").strip().lower()
             carrier_name = (row.get("carrier_name") or "").strip()
             valid = bool(carrier_type and carrier_type not in ("invalid", "unknown"))
@@ -492,21 +533,25 @@ def verify_lead_phones(conn, api_key, lead_rows, run_id=None, log=print):
         conn.commit()
     log(f"Validating {len(lead_rows)} phone numbers...")
 
-    validation = validate_phones(api_key, [r["phone"] for r in lead_rows])
+    validation = validate_phones(api_key, [r["phone"] for r in lead_rows], log=log)
     now = db.now_iso()
-    invalid = 0
+    invalid = checked = 0
     for row in lead_rows:
         info = validation.get(row["phone"])
         if not info:
-            continue
+            continue   # no answer for this number: left unvalidated, not guessed
         conn.execute(
             "UPDATE leads SET phone_type = ?, phone_valid = ?, validated_at = ? WHERE id = ?",
             (info["type"], 1 if info["valid"] else 0, now, row["id"]),
         )
+        checked += 1
         if not info["valid"]:
             invalid += 1
     conn.commit()
-    return {"checked": len(lead_rows), "invalid": invalid}
+    unmatched = len(lead_rows) - checked
+    if unmatched:
+        log(f"  {unmatched} number(s) got no usable answer and stay unvalidated")
+    return {"checked": checked, "invalid": invalid, "unmatched": unmatched}
 
 
 # Words that mark a result as actually being in the industry asked for. Maps

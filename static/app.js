@@ -505,6 +505,103 @@ if (verifyBtn) {
   });
 }
 
+// ---- verify emails button (provider behind email_verify.py) ----
+// Mirrors the enrich flow: the click only asks the server what a run would
+// check and cost, shows that in a modal, and nothing is sent to the provider
+// until the user confirms.
+const emailBtn = document.getElementById("verify-emails-btn");
+if (emailBtn) {
+  const eresult = document.getElementById("email-verify-result");
+  const modal = document.getElementById("email-verify-modal");
+  const label = "Verify emails";
+
+  const scope = () => {
+    const payload = { run_id: emailBtn.dataset.run_id || "" };
+    try {
+      Object.assign(payload, JSON.parse(emailBtn.dataset.filters || "{}"));
+    } catch { /* no filters on this page */ }
+    const ids = [...document.querySelectorAll(".lead-select:checked")].map((cb) => cb.value);
+    if (ids.length) payload.lead_ids = ids;      // only the checked rows
+    return payload;
+  };
+
+  const say = (cls, text) => {
+    eresult.hidden = false;
+    eresult.className = "pull-result" + (cls ? " " + cls : "");
+    eresult.textContent = text;
+  };
+
+  const poll = async () => {
+    let s;
+    try {
+      s = await (await fetch("/api/verify_emails/status")).json();
+    } catch {
+      setTimeout(poll, 3000);
+      return;
+    }
+    if (s.running) { setTimeout(poll, 2000); return; }
+    emailBtn.disabled = false;
+    emailBtn.textContent = label;
+    const r = s.last || {};
+    if (r.error && !r.checked) {
+      say("err", `Email verification failed: ${r.error}`);
+      return;
+    }
+    say("ok",
+      `Checked ${r.checked || 0} email${r.checked === 1 ? "" : "s"}: ` +
+      `${r.valid || 0} valid, ${r.risky || 0} risky, ${r.catch_all || 0} catch-all, ` +
+      `${r.invalid || 0} invalid, ${r.unknown || 0} unknown. ` +
+      `Up to ${r.credits || 0} credit${r.credits === 1 ? "" : "s"} spent.` +
+      (r.error ? ` Stopped early: ${r.error}` : ""));
+    setTimeout(() => location.reload(), 6000);
+  };
+
+  const run = async () => {
+    emailBtn.disabled = true;
+    emailBtn.textContent = "Verifying…";
+    say("", "Checking email addresses…");
+    try {
+      const r = await postJSON("/api/verify_emails", scope());
+      say("", `Verifying ${r.count} email address${r.count === 1 ? "" : "es"}…`);
+      poll();
+    } catch (e) {
+      emailBtn.disabled = false;
+      emailBtn.textContent = label;
+      say("err", e.message);
+    }
+  };
+
+  emailBtn.addEventListener("click", async () => {
+    let est;
+    try {
+      est = await postJSON("/api/verify_emails/estimate", scope());
+    } catch (e) {
+      say("err", e.message);
+      return;
+    }
+    if (!est.count) {
+      say("err", "No unchecked email addresses in this view.");
+      return;
+    }
+    if (!modal) { run(); return; }
+    const n = est.count;
+    document.getElementById("email-verify-scope").innerHTML =
+      `You're about to check <strong>${n}</strong> email address${n === 1 ? "" : "es"} ` +
+      `that ${n === 1 ? "hasn't" : "haven't"} been verified yet.`;
+    document.getElementById("email-verify-cost").textContent =
+      `up to ${est.credits} ${est.provider} credit${est.credits === 1 ? "" : "s"}.`;
+    modal.hidden = false;
+  });
+
+  const closeModal = () => { if (modal) modal.hidden = true; };
+  document.getElementById("email-verify-cancel")?.addEventListener("click", closeModal);
+  document.getElementById("email-verify-confirm")?.addEventListener("click", () => {
+    closeModal();
+    run();      // only now is anything sent to the provider
+  });
+  modal?.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+}
+
 // ---- enrich contacts button (Apollo) ----
 const enrichBtn = document.getElementById("enrich-btn");
 if (enrichBtn) {

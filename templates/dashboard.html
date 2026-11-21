@@ -215,6 +215,11 @@
     <button id="verify-btn" class="button" {{ 'disabled' if not api_key_set or not leads }}
       data-run_id="{{ run_id or '' }}"
       title="Check this pull's phone numbers via Outscraper (costs credits); marks dead lines invalid">Verify phones</button>
+    {# Dormant until EMAIL_VERIFY_API_KEY is set: the button then opens a
+       count-and-cost confirmation before anything is sent to the provider. #}
+    <button id="verify-emails-btn" class="button" {{ 'disabled' if not email_verify_enabled or not leads }}
+      data-run_id="{{ run_id or '' }}"
+      title="{% if email_verify_enabled %}Check this pull's email addresses via {{ email_verify_provider }} (costs credits); invalid ones are left out of exports{% else %}Set EMAIL_VERIFY_API_KEY to enable email verification{% endif %}">Verify emails</button>
     {# Always offered: the website tier is free and needs no provider. With
        Apollo absent the reveal flags are forced off, so the button cannot
        promise anything it can't do. #}
@@ -257,7 +262,9 @@
   {% endif %}
 </section>
 <div id="verify-result" class="pull-result" hidden></div>
+<div id="email-verify-result" class="pull-result" hidden></div>
 <div id="enrich-result" class="pull-result" hidden></div>
+{% if email_verify_enabled %}{% include "_email_verify_modal.html" %}{% endif %}
 
 {% with show_appointment = active_campaign and active_campaign['goal'] == 'appointment', select_leads = true %}
   {% include "_lead_table.html" %}

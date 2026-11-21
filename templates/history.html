@@ -88,6 +88,9 @@
       data-company-size="{{ '1' if offer_wants_company_size and apollo_enabled else '0' }}"
       data-settings-url="{{ url_for('settings') }}"
       title="Find decision-makers for the leads matching these filters">Enrich contacts</button>
+    <button type="button" id="verify-emails-btn" class="button" {{ 'disabled' if not email_verify_enabled }}
+      data-filters='{{ filter_args|tojson }}'
+      title="{% if email_verify_enabled %}Check the email addresses of the leads matching these filters via {{ email_verify_provider }} (costs credits){% else %}Set EMAIL_VERIFY_API_KEY to enable email verification{% endif %}">Verify emails</button>
   </form>
   {% if out_of_hours %}
   <p class="warn" style="margin-top:8px;">⚠️ <strong>{{ out_of_hours }}</strong> of these leads {{ 'are' if out_of_hours != 1 else 'is' }} outside the recipient's legal calling window right now (CRTC / US TSR). Ensure VICIdial dials by the recipient's time zone — or <a href="{{ url_for('export_vicidial', enforce_hours=1, **f) }}">export in-hours only</a>.</p>
@@ -96,7 +99,9 @@
 
 <p class="dim">{{ leads | length }} lead(s)</p>
 <div id="enrich-result" class="pull-result" hidden></div>
+<div id="email-verify-result" class="pull-result" hidden></div>
 {% include "_enrich_modal.html" %}
+{% if email_verify_enabled %}{% include "_email_verify_modal.html" %}{% endif %}
 
 {# Row selection matters more here than on the Dashboard: this is where you'd
    pick a handful to try before spending on a whole filtered set. #}

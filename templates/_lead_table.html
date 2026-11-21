@@ -47,7 +47,9 @@
         <div class="small contact-line">
           {% if lead['contact'] %}&#128100; {{ lead['contact'] }}{% if lead['contact_title'] %} <span class="dim">({{ lead['contact_title'] }})</span>{% endif %}{% endif %}
           {% if lead['direct_phone'] %} &#128222; <a href="tel:{{ lead['direct_phone'] }}">{{ lead['direct_phone'] }}</a>{% endif %}
-          {% if lead['email'] %} &#9993; {{ lead['email'] }}{% endif %}
+          {% if lead['email'] %} &#9993; {{ lead['email'] }}{% if lead['email_status'] %}
+            <span class="phone-tag {{ 'ok' if lead['email_status'] == 'valid' else ('bad' if lead['email_status'] == 'invalid' else '') }}"
+                  title="Email checked {{ (lead['email_checked_at'] or '')[:10] }}{% if lead['email_status'] == 'invalid' %} — left out of exports{% endif %}">{{ lead['email_status'].replace('_', '-') }}</span>{% endif %}{% endif %}
         </div>
         {% endif %}
       </td>

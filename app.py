@@ -27,6 +27,7 @@ import contacts
 import db
 import dialer_import
 import dnc
+import email_verify
 import intent_signals
 import geo_data
 import leads_intake
@@ -927,6 +928,8 @@ def dashboard():
         last_country=db.get_setting(conn, "last_country", "United States"),
         api_key_set=bool(pipeline.get_api_key()),
         apollo_enabled=contacts.enabled(),
+        email_verify_enabled=email_verify.enabled(),
+        email_verify_provider=email_verify.provider_name(),
         nppes_industries=nppes.supported_industries(),
         # Drive the enrichment confirmation modal's cost estimate.
         enrich_reveal_email=db.get_setting(conn, "enrich_reveal_email", "1") == "1",
@@ -960,6 +963,8 @@ def history():
         offer_wants_company_size=contacts.offer_wants_company_size(
             conn, request.args.get("campaign_id")),
         out_of_hours=out_of_hours_count(conn, request.args),
+        email_verify_enabled=email_verify.enabled(),
+        email_verify_provider=email_verify.provider_name(),
     )
 
 
@@ -988,6 +993,8 @@ def settings():
         enrich_reveal_phone=db.get_setting(conn, "enrich_reveal_phone", "0") == "1",
         api_key_set=bool(pipeline.get_api_key()),
         apollo_key_tail=_key_tail(contacts.api_key()),
+        email_verify_enabled=email_verify.enabled(),
+        email_verify_provider=email_verify.provider_name(),
         storage=storage_status(conn),
     )
 
@@ -1133,6 +1140,17 @@ def export_filename(conn, args, leads, prefix=""):
     return "_".join(p for p in parts if p) + ".csv"
 
 
+def _exportable(lead):
+    """A lead as a dict for an export file. An email that verification marked
+    invalid is left out: the lead is still worth dialling, but handing agents
+    (or a mail merge) a dead address only produces bounces. Statuses risky,
+    catch_all and unknown are kept — they may still deliver."""
+    row = dict(lead)
+    if row.get("email_status") == "invalid":
+        row["email"] = ""
+    return row
+
+
 @app.route("/export.csv")
 def export_csv():
     conn = get_db()
@@ -1153,7 +1171,7 @@ def export_csv():
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows([dict(lead) for lead in leads])
+    writer.writerows([_exportable(lead) for lead in leads])
     name = export_filename(conn, request.args, leads)
     # With a byte-order mark: this is the file people open in Excel, and Excel
     # reads a CSV without one as Windows-1252 — every em dash in a call hook
@@ -1337,7 +1355,7 @@ def export_vicidial():
             "Zip": lead["postcode"],
             "Website": lead["website"],
             "Phone": vici_phone(lead["phone"]),
-            "Email": lead["email"],
+            "Email": _exportable(lead)["email"],
             "Category": lead["category"],
             "URL": lead["maps_url"],
         }
@@ -2149,6 +2167,100 @@ def verify_phones():
 def verify_phones_status():
     running = _verify_lock.locked()
     return jsonify({"running": running})
+
+
+# --- on-demand email verification (provider behind email_verify.py; dormant
+#     without EMAIL_VERIFY_API_KEY) ---
+
+_email_verify_lock = threading.Lock()
+
+
+def _email_verify_worker(lead_ids):
+    try:
+        conn = db.connect()
+        rows = conn.execute(
+            f"SELECT id, email FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
+            lead_ids,
+        ).fetchall()
+        result = email_verify.verify_leads(conn, rows, log=lambda *_: None)
+        result["finished_at"] = db.now_iso()
+        result["leads"] = len(lead_ids)
+        db.set_setting(conn, "email_verify_last_result", json.dumps(result))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        try:
+            conn = db.connect()
+            db.set_setting(conn, "email_verify_last_result", json.dumps({"error": str(e)}))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+    finally:
+        _email_verify_lock.release()
+
+
+def _email_verify_targets(conn, args):
+    """Lead ids an email check would cover: the checked rows if any were sent,
+    else the filtered view — only leads that have an email, and only ones not
+    yet checked unless `recheck` is set. Same scoping as enrichment."""
+    extra = " AND email != ''"
+    if not args.get("recheck"):
+        extra += " AND email_checked_at IS NULL"
+    picked = args.get("lead_ids")
+    if isinstance(picked, list) and picked:
+        ids = [int(i) for i in picked if str(i).strip().isdigit()]
+        ph = ",".join("?" * len(ids)) or "NULL"
+        return [r["id"] for r in conn.execute(
+            f"SELECT id FROM leads WHERE id IN ({ph}){extra}", ids)]
+    clause, params = lead_filters(args)
+    return [r["id"] for r in conn.execute(
+        f"SELECT id FROM leads {clause or 'WHERE 1=1'}{extra}", params)]
+
+
+@app.route("/api/verify_emails/estimate", methods=["POST"])
+def verify_emails_estimate():
+    """What a run would check and cost, for the confirmation modal. Spends
+    nothing. Takes the same JSON scope as /api/verify_emails."""
+    conn = get_db()
+    ids = _email_verify_targets(conn, request.json or {})
+    return jsonify({
+        "enabled": email_verify.enabled(),
+        "provider": email_verify.provider_name(),
+        "count": len(ids),
+        "credits": email_verify.estimate_credits(len(ids)),
+    })
+
+
+@app.route("/api/verify_emails", methods=["POST"])
+def verify_emails():
+    """Check the deliverability of the emails in scope. Background; poll
+    /api/verify_emails/status. The dashboard shows an estimate and asks for a
+    confirmation first; this endpoint is what that confirmation calls."""
+    if not email_verify.enabled():
+        return jsonify({"error": "Email verification is not configured: set "
+                        "EMAIL_VERIFY_API_KEY (and EMAIL_VERIFY_PROVIDER if not "
+                        "zerobounce)."}), 400
+    conn = get_db()
+    lead_ids = _email_verify_targets(conn, request.json or {})
+    if not lead_ids:
+        return jsonify({"error": "No unchecked email addresses in this view"}), 400
+    if not _email_verify_lock.acquire(blocking=False):
+        return jsonify({"error": "An email verification run is already in progress"}), 409
+    threading.Thread(target=_email_verify_worker, args=(lead_ids,), daemon=True).start()
+    return jsonify({"ok": True, "count": len(lead_ids),
+                    "credits": email_verify.estimate_credits(len(lead_ids))})
+
+
+@app.route("/api/verify_emails/status")
+def verify_emails_status():
+    conn = get_db()
+    last = db.get_setting(conn, "email_verify_last_result", "")
+    try:
+        last = json.loads(last) if last else None
+    except ValueError:
+        last = None
+    return jsonify({"running": _email_verify_lock.locked(), "last": last})
 
 
 # --- on-demand contact enrichment (Apollo) — fills decision-maker name/title ---

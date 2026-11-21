@@ -25,6 +25,11 @@ is configurable, and an optional password gate protects it.
    - `APP_PASSWORD=<a strong password>` — **without this the site is wide open** to
      anyone with the URL, including the credit-spending "Pull New Leads" button
    - (later) `APIFY_TOKEN=<token>` for the Apify bulk-pull path
+   - (optional) `EMAIL_VERIFY_API_KEY=<key>` (+ `EMAIL_VERIFY_PROVIDER`, default
+     `zerobounce`) — turns on the **Verify emails** button. Each check costs a
+     provider credit and is always confirmed with a count and cost first; an
+     email marked invalid is left out of exports. Without the key the feature
+     is dormant and costs nothing.
    - (optional) `SEED_CLIENTS_FILE=<path>` — a JSON list of client engagements
      (client + campaigns) to create once on first start; see
      `seed_clients.example.json`. Without it, or `seed_clients.json` in
