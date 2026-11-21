@@ -20,6 +20,8 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
+import dedupe
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Postgres when DATABASE_URL is set, SQLite otherwise. Railway injects
@@ -444,6 +446,11 @@ LEAD_EXTRA_COLUMNS = {
     "country": "TEXT NOT NULL DEFAULT ''",              # for geo filtering
     "facebook": "TEXT NOT NULL DEFAULT ''",             # Facebook page URL if listed
     "business_status": "TEXT NOT NULL DEFAULT ''",      # OPERATIONAL / CLOSED_* (connect-rate)
+    # Dedupe keys beyond the UNIQUE phone (see dedupe.py). Not UNIQUE themselves:
+    # legacy rows are blank, and the pull checks them before inserting.
+    "place_id": "TEXT NOT NULL DEFAULT ''",             # Google's listing id
+    "site_key": "TEXT NOT NULL DEFAULT ''",             # website domain | street (or postcode)
+    "name_key": "TEXT NOT NULL DEFAULT ''",             # normalised name | postcode
 }
 
 # Extra columns on pull_runs added after first release.
@@ -815,6 +822,9 @@ def init_db(db_path=DB_FILE):
         "CREATE INDEX IF NOT EXISTS idx_leads_run ON leads(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_leads_campaign ON leads(campaign_id)",
         "CREATE INDEX IF NOT EXISTS idx_runs_campaign ON pull_runs(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_place_id ON leads(place_id)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_site_key ON leads(site_key)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_name_key ON leads(name_key)",
     ):
         conn.execute(ddl)
 
@@ -843,6 +853,7 @@ def init_db(db_path=DB_FILE):
     _migrate_cities(conn)
     _migrate_leads(conn)
     _backfill_lead_fields(conn)
+    _backfill_dedupe_keys(conn)
     _backfill_run_ids(conn)
     _backfill_reviews(conn)
 
@@ -1024,6 +1035,25 @@ def _backfill_lead_fields(conn):
         if m:
             conn.execute("UPDATE leads SET postcode = ? WHERE id = ?",
                          (m.group(1), row["id"]))
+
+
+def _backfill_dedupe_keys(conn):
+    """Compute site_key/name_key for rows that predate the columns, so a
+    re-listed business already held is caught by the pull. place_id cannot be
+    recovered (it was never stored). Runs once; new rows get keys on insert.
+    Runs after _backfill_lead_fields, which fills the postcode the keys need."""
+    if get_setting(conn, "dedupe_keys_v1", "") == "done":
+        return
+    rows = conn.execute(
+        "SELECT id, business_name, website, street_address, address, postcode "
+        "FROM leads WHERE site_key = '' AND name_key = ''").fetchall()
+    for r in rows:
+        k = dedupe.lead_keys(r["business_name"], r["website"], r["street_address"],
+                             r["address"], r["postcode"])
+        if k["site_key"] or k["name_key"]:
+            conn.execute("UPDATE leads SET site_key = ?, name_key = ? WHERE id = ?",
+                         (k["site_key"], k["name_key"], r["id"]))
+    set_setting(conn, "dedupe_keys_v1", "done")
 
 
 def _backfill_run_ids(conn):

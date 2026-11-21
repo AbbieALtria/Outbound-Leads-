@@ -20,6 +20,7 @@ from pathlib import Path
 import requests
 
 import db
+import dedupe
 import geo_data
 import nppes
 import dnc
@@ -634,51 +635,10 @@ def abbrev_state_code(state):
     return _STATE_CODES.get(s.lower(), "")
 
 
-def _norm_name(name):
-    """Loose key for matching the same business across locations: lowercased,
-    punctuation + common legal suffixes stripped."""
-    n = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower())
-    n = re.sub(r"\b(inc|llc|ltd|co|corp|corporation|company|the)\b", " ", n)
-    return re.sub(r"\s+", " ", n).strip()
-
-
-# Mail hosts and site builders anyone can sign up for. Two businesses sharing
-# one of these share a vendor, not an owner, so they must never group.
-GENERIC_DOMAINS = {
-    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.ca", "yahoo.co.uk",
-    "hotmail.com", "hotmail.ca", "outlook.com", "live.com", "live.ca", "msn.com",
-    "aol.com", "icloud.com", "me.com", "mac.com", "protonmail.com", "proton.me",
-    "gmx.com", "zoho.com", "mail.com", "email.com",
-    # Canadian ISP mailboxes — very common for owner-operators
-    "shaw.ca", "telus.net", "rogers.com", "bell.net", "sympatico.ca",
-    "videotron.ca", "cogeco.ca", "eastlink.ca", "xplornet.com",
-    # hosted site builders / directories
-    "wixsite.com", "wix.com", "squarespace.com", "wordpress.com", "weebly.com",
-    "business.site", "godaddysites.com", "myshopify.com", "blogspot.com",
-    "facebook.com", "sites.google.com", "webs.com", "jimdosite.com",
-    "yelp.com", "linktr.ee",
-}
-
-
-def _org_domain(value):
-    """Owning domain from an email address or URL; '' when absent or generic.
-
-    Returning '' for the generic hosts above is the whole point of this helper:
-    a blank key never groups, so two unrelated clinics on gmail stay separate.
-    """
-    v = (value or "").strip().lower()
-    if not v:
-        return ""
-    host = v.rsplit("@", 1)[1] if "@" in v else re.sub(r"^[a-z]+://", "", v)
-    host = re.split(r"[/?#:]", host, 1)[0]
-    if host.startswith("www."):
-        host = host[4:]
-    if "." not in host or host in GENERIC_DOMAINS:
-        return ""
-    # a subdomain of a builder (mysite.wixsite.com) is just as generic
-    if any(host.endswith("." + g) for g in GENERIC_DOMAINS):
-        return ""
-    return host
+# Name/domain normalisers live in dedupe.py (shared with the DB backfill);
+# kept under their old names for the grouping code below.
+_norm_name, _org_domain = dedupe.norm_name, dedupe.org_domain
+GENERIC_DOMAINS = dedupe.GENERIC_DOMAINS
 
 
 def _stamp_location_counts(conn, log=print):
@@ -971,6 +931,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         added_total = 0
         places_seen = 0      # records Outscraper billed us for
         off_industry = 0     # returned, but not in the industry searched for
+        duplicates = 0       # a place (or phone) we already hold
         query_errors = 0
         last_error = ""
         new_lead_ids = []
@@ -1119,6 +1080,24 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
 
                         address = place.get("full_address") or place.get("address") or ""
                         website = place.get("site") or place.get("website") or ""
+                        # Non-US places often come back without a postal code; a
+                        # ZIP/postal-code sweep still knows the area it searched.
+                        postcode = (extract_postcode(place, address)
+                                    or target_loc.get("postcode", ""))
+                        # Same PLACE already held (new tracking number, re-listed
+                        # site, or the same business returned by two overlapping
+                        # ZIPs)? Skip it. A second branch at another address has
+                        # different keys and is kept — see dedupe.py.
+                        keys = dedupe.lead_keys(
+                            name, website, street=place.get("street") or "",
+                            address=address, postcode=postcode,
+                            place_id=place.get("place_id") or place.get("google_id") or "")
+                        matched = dedupe.find_existing(conn, keys)
+                        if matched:
+                            duplicates += 1
+                            _reject(name, "duplicate", category)
+                            log(f"  skipped duplicate ({matched}): {name}")
+                            continue
                         reviews = _as_int(place.get("reviews") or place.get("reviews_count"))
                         rating = _as_float(place.get("rating"))
                         # Outscraper: verified=False => "Claim this business" (unclaimed).
@@ -1142,8 +1121,9 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                             "website, category, industry, score, call_hook, pulled_date, "
                             "email, contact, postcode, search_query, run_id, campaign_id, phone_valid, "
                             "reviews, rating, unclaimed, street_address, maps_url, "
-                            "country, facebook, business_status) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "country, facebook, business_status, place_id, site_key, name_key) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                            "?, ?, ?)",
                             (
                                 phone, name, address,
                                 place.get("city") or target_loc["city"],
@@ -1153,11 +1133,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                                 slug, score, hook, today,
                                 email,
                                 extract_contact(place),
-                                # Non-US places often come back without a postal
-                                # code; a ZIP/postal-code sweep still knows the
-                                # area it searched, so stamp that as the fallback.
-                                (extract_postcode(place, address)
-                                 or target_loc.get("postcode", "")),
+                                postcode,
                                 query_text, run_id, campaign_id,
                                 0 if needs_phone else 1,
                                 reviews, rating, unclaimed,
@@ -1166,12 +1142,16 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                                 place.get("country") or target_loc["country"],
                                 place.get("facebook") or "",
                                 biz_status,
+                                keys["place_id"], keys["site_key"], keys["name_key"],
                             ),
                         )
-                        if cur.rowcount:  # 0 when the phone was already seen (dedupe)
+                        if cur.rowcount:
                             added_total += 1
                             added_this_query += 1
                             new_lead_ids.append(cur.lastrowid)
+                        else:  # the phone was already seen (UNIQUE phone dedupe)
+                            duplicates += 1
+                            _reject(name, "duplicate", category)
 
                     conn.commit()
                     _update_run(conn, run_id, added=added_total)
@@ -1259,6 +1239,8 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                         f"({keep}% keep-rate)")
             if off_industry:
                 message += f" | {off_industry} off-industry dropped"
+            if duplicates:
+                message += f" | {duplicates} duplicates skipped"
             status = "done"
         _update_run(conn, run_id, status=status, finished_at=db.now_iso(),
                     added=added_total, current_city="", message=message)
