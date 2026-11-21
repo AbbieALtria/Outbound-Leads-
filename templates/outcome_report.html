@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Outcomes — Lead Gen Platform{% endblock %}
+{% block content %}
+
+<section class="card wide">
+  <h2>What the calls are telling the scoring</h2>
+  <p class="dim small">For each campaign, every scoring signal is compared on the leads that have
+    actually been contacted: how often did the leads it fired on end up interested, booked, or
+    not interested, versus the leads it did not fire on? Outcomes come from lead statuses set on
+    the dashboard and from imported VICIdial dispositions.</p>
+  <p class="warn"><strong>Analysis only.</strong> Nothing on this page changes a rule or rescores a
+    lead. Suggested points are a starting point for a human decision — to apply one, edit the
+    offer's rules in <a href="{{ url_for('settings') }}">Settings</a>.
+    A signal needs <strong>{{ min_sample }}+</strong> contacted leads before it is rated.</p>
+
+  <form method="get" class="inline-form" style="margin:8px 0 4px;">
+    <label class="dim small">Campaign
+      <select name="campaign_id" onchange="this.form.submit()">
+        <option value="" {{ 'selected' if not selected_id }}>All</option>
+        {% for c in campaigns %}
+        <option value="{{ c['id'] }}" {{ 'selected' if selected_id == c['id']|string }}>{{ c['name'] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+
+  {% if not reports %}
+  <p class="dim">No leads yet — nothing to compare.</p>
+  {% endif %}
+
+  {% for r in reports %}
+  <h3 style="margin-top:18px;">{{ r['campaign'] }} <span class="dim small">· offer: {{ r['offer'] }}</span></h3>
+  {% set t = r['totals'] %}
+  <p class="small">Contacted <strong>{{ t['n'] }}</strong>
+    {% if t['n'] %}· interested {{ (100 * t['interested'])|round|int }}% · appointment
+    {{ (100 * t['appointment'])|round|int }}% · not interested {{ (100 * t['not_interested'])|round|int }}%{% endif %}
+    {% if t['n'] < min_sample %}<span class="warn">· not enough contacted leads yet for any signal to be rated</span>{% endif %}
+  </p>
+  {% if not r['signals'] %}
+  <p class="dim small">This offer has no scoring rules.</p>
+  {% else %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th rowspan="2">Signal</th><th rowspan="2">Points now</th>
+        <th colspan="4">Leads WITH the signal</th>
+        <th colspan="4">Leads WITHOUT it</th>
+        <th rowspan="2" title="Positive rate (interested + appointment) with the signal minus without it">Lift</th>
+        <th rowspan="2">Suggested points</th><th rowspan="2">Why</th>
+      </tr>
+      <tr>
+        <th>n</th><th>interested</th><th>appointment</th><th>not interested</th>
+        <th>n</th><th>interested</th><th>appointment</th><th>not interested</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in r['signals'] %}
+      {% set w = s['with'] %}{% set wo = s['without'] %}
+      <tr class="{{ 'dim' if not s['enough_data'] }}">
+        <td><code>{{ s['signal'] }}</code></td>
+        <td>{{ s['points'] }}</td>
+        <td>{{ w['n'] }}</td>
+        <td>{{ (100 * w['interested'])|round|int ~ '%' if w['n'] else '-' }}</td>
+        <td>{{ (100 * w['appointment'])|round|int ~ '%' if w['n'] else '-' }}</td>
+        <td>{{ (100 * w['not_interested'])|round|int ~ '%' if w['n'] else '-' }}</td>
+        <td>{{ wo['n'] }}</td>
+        <td>{{ (100 * wo['interested'])|round|int ~ '%' if wo['n'] else '-' }}</td>
+        <td>{{ (100 * wo['appointment'])|round|int ~ '%' if wo['n'] else '-' }}</td>
+        <td>{{ (100 * wo['not_interested'])|round|int ~ '%' if wo['n'] else '-' }}</td>
+        <td>{% if s['lift'] is not none and s['enough_data'] %}{{ '%+d'|format((100 * s['lift'])|round|int) }} pts{% else %}-{% endif %}</td>
+        <td>{% if s['suggested'] is none %}<span class="warn">not enough data</span>{% elif s['suggested'] == s['points'] %}keep {{ s['points'] }}{% else %}<strong>{{ s['suggested'] }}</strong>{% endif %}</td>
+        <td class="small">{{ s['note'] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
+</section>
+{% endblock %}

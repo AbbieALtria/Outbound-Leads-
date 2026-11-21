@@ -61,6 +61,12 @@
             data-known='{{ known_by_state|tojson }}'
             data-last-city="{{ pre_city }}"></select>
     <input id="pull-city-new" class="geo" type="text" placeholder="Type city" autocomplete="off" hidden>
+    {# Optional: one or more postal / ZIP codes. Each becomes its own search area
+       (narrower than a city, so it also surfaces businesses past Maps' result cap).
+       Replaces the city sweep when filled. #}
+    <input id="pull-postcodes" class="geo" type="text" style="width:170px;"
+           placeholder="ZIP / postal code(s)" autocomplete="off"
+           title="Optional. Comma-separated ZIP (US) or postal codes (Canada: M5V or M5V 2T6). Each code is searched separately inside the selected country.">
     {# Second discovery source. Only meaningful for licensed US healthcare provider
        types, so JS hides this unless the picked industry is one of them. #}
     <span id="source-wrap" hidden>
@@ -163,6 +169,11 @@
         {{ last_enrich.get('site_tried', 0) }} decision-makers free from company websites{%
           if last_enrich.get('site_tried') %} ({{ (100 * last_enrich.get('site_hits', 0) //
           last_enrich['site_tried']) }}%){% endif %}.
+        {% if last_enrich.get('ai_calls') or last_enrich.get('ai_capped') %}
+        Claude read <strong>{{ last_enrich.get('ai_calls', 0) }}</strong> page{{ 's' if last_enrich.get('ai_calls') != 1 }}
+        and named {{ last_enrich.get('ai_hits', 0) }}{% if last_enrich.get('ai_capped') %};
+        {{ last_enrich['ai_capped'] }} skipped at the per-run cap{% endif %}.
+        {% endif %}
         {% if not last_enrich.get('checked') and not last_enrich.get('org_calls') %}
         No paid provider configured — nothing searched, no credits spent.
         {% else %}
@@ -209,6 +220,11 @@
     <button id="verify-btn" class="button" {{ 'disabled' if not api_key_set or not leads }}
       data-run_id="{{ run_id or '' }}"
       title="Check this pull's phone numbers via Outscraper (costs credits); marks dead lines invalid">Verify phones</button>
+    {# Dormant until EMAIL_VERIFY_API_KEY is set: the button then opens a
+       count-and-cost confirmation before anything is sent to the provider. #}
+    <button id="verify-emails-btn" class="button" {{ 'disabled' if not email_verify_enabled or not leads }}
+      data-run_id="{{ run_id or '' }}"
+      title="{% if email_verify_enabled %}Check this pull's email addresses via {{ email_verify_provider }} (costs credits); invalid ones are left out of exports{% else %}Set EMAIL_VERIFY_API_KEY to enable email verification{% endif %}">Verify emails</button>
     {# Always offered: the website tier is free and needs no provider. With
        Apollo absent the reveal flags are forced off, so the button cannot
        promise anything it can't do. #}
@@ -251,7 +267,9 @@
   {% endif %}
 </section>
 <div id="verify-result" class="pull-result" hidden></div>
+<div id="email-verify-result" class="pull-result" hidden></div>
 <div id="enrich-result" class="pull-result" hidden></div>
+{% if email_verify_enabled %}{% include "_email_verify_modal.html" %}{% endif %}
 
 {% with show_appointment = active_campaign and active_campaign['goal'] == 'appointment', select_leads = true %}
   {% include "_lead_table.html" %}

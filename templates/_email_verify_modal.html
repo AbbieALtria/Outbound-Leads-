@@ -1,0 +1,21 @@
+{# Shared by the Dashboard and History, like the enrichment modal: nothing is
+   checked (or billed) until the user has seen the count and the cost. #}
+<div id="email-verify-modal" class="modal-backdrop" hidden>
+  <div class="modal-card">
+    <h3 style="margin-top:0;">⚠️ Email verification ({{ email_verify_provider }}) — this will spend credits</h3>
+    <p id="email-verify-scope"></p>
+    <ul class="small" style="line-height:1.6;">
+      <li><strong>Estimated cost for this run:</strong> <span id="email-verify-cost"></span>
+        Credits come out of your {{ email_verify_provider }} plan.</li>
+      <li>Only leads <strong>with an email that hasn't been checked yet</strong> are
+        sent; the rest cost nothing.</li>
+      <li>Each address is marked valid, risky, catch-all, invalid or unknown.
+        An <strong>invalid</strong> email stays on the lead but is left out of
+        every export; the lead itself is still dialled.</li>
+    </ul>
+    <p style="text-align:right;margin-bottom:0;">
+      <button type="button" class="button" id="email-verify-cancel">Cancel</button>
+      <button type="button" class="primary" id="email-verify-confirm">Yes, verify these emails</button>
+    </p>
+  </div>
+</div>

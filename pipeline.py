@@ -20,6 +20,7 @@ from pathlib import Path
 import requests
 
 import db
+import dedupe
 import geo_data
 import nppes
 import dnc
@@ -439,11 +440,26 @@ def collect_review_signals(conn, lead_ids, api_key, log=print):
     return done
 
 
-def validate_phones(api_key, phones):
+def _phone_key(phone):
+    """Digits only, with a North American leading country code dropped, so
+    '(281) 236-8208' and Outscraper's echo '12812368208' compare equal."""
+    d = re.sub(r"\D", "", phone or "")
+    return d[1:] if len(d) == 11 and d.startswith("1") else d
+
+
+def validate_phones(api_key, phones, log=print):
     """Validate a batch of phone numbers via Outscraper's phones-enricher.
     Returns {original_phone: {"type": <line type>, "valid": bool, "carrier": str}}.
     A number Outscraper can't identify a carrier for is treated as invalid.
-    Raises RuntimeError on API failure so callers can surface it."""
+    Raises RuntimeError on API failure so callers can surface it.
+
+    Each result item echoes the number it answers for in `query` (per the
+    phones-enricher docs), so results are matched on that, never on position:
+    a dropped or reordered item would otherwise stamp a lead with its
+    neighbour's line type and could mark a live number dead. Position is
+    trusted only when no item carries a query AND the counts agree; a chunk
+    that can't be paired up is skipped with a warning and its numbers stay
+    unvalidated (phone_valid untouched) rather than guessed."""
     phones = [p for p in phones if p]
     if not phones:
         return {}
@@ -462,11 +478,37 @@ def validate_phones(api_key, phones):
                 f"Phone validation failed (status {resp.status_code}): {resp.text[:200]}"
             )
         data = resp.json()
-        rows = data.get("data", data)
+        rows = data.get("data", data) if isinstance(data, dict) else data
         flat = []
-        for item in rows:
+        for item in rows or []:
             flat.extend(item if isinstance(item, list) else [item])
-        for original, row in zip(chunk, flat):
+        flat = [row for row in flat if isinstance(row, dict)]
+
+        by_key = {_phone_key(p): p for p in chunk}
+        pairs, unkeyed, strays = [], [], 0
+        for row in flat:
+            echoed = row.get("query") or row.get("phone") or ""
+            if not echoed:
+                unkeyed.append(row)
+                continue
+            original = by_key.get(_phone_key(str(echoed)))
+            if original is None:
+                strays += 1
+            else:
+                pairs.append((original, row))
+        if unkeyed and not pairs:
+            if len(flat) == len(chunk):
+                pairs = list(zip(chunk, flat))     # old-style answer; counts agree
+            else:
+                log(f"  WARNING: phone validation returned {len(flat)} results for "
+                    f"{len(chunk)} numbers with nothing to match them on; "
+                    f"skipping these {len(chunk)} numbers")
+                continue
+        elif unkeyed or strays:
+            log(f"  WARNING: phone validation: ignoring {len(unkeyed)} result(s) "
+                f"without a number and {strays} for numbers not asked about")
+
+        for original, row in pairs:
             carrier_type = (row.get("carrier_type") or "").strip().lower()
             carrier_name = (row.get("carrier_name") or "").strip()
             valid = bool(carrier_type and carrier_type not in ("invalid", "unknown"))
@@ -491,21 +533,25 @@ def verify_lead_phones(conn, api_key, lead_rows, run_id=None, log=print):
         conn.commit()
     log(f"Validating {len(lead_rows)} phone numbers...")
 
-    validation = validate_phones(api_key, [r["phone"] for r in lead_rows])
+    validation = validate_phones(api_key, [r["phone"] for r in lead_rows], log=log)
     now = db.now_iso()
-    invalid = 0
+    invalid = checked = 0
     for row in lead_rows:
         info = validation.get(row["phone"])
         if not info:
-            continue
+            continue   # no answer for this number: left unvalidated, not guessed
         conn.execute(
             "UPDATE leads SET phone_type = ?, phone_valid = ?, validated_at = ? WHERE id = ?",
             (info["type"], 1 if info["valid"] else 0, now, row["id"]),
         )
+        checked += 1
         if not info["valid"]:
             invalid += 1
     conn.commit()
-    return {"checked": len(lead_rows), "invalid": invalid}
+    unmatched = len(lead_rows) - checked
+    if unmatched:
+        log(f"  {unmatched} number(s) got no usable answer and stay unvalidated")
+    return {"checked": checked, "invalid": invalid, "unmatched": unmatched}
 
 
 # Words that mark a result as actually being in the industry asked for. Maps
@@ -634,51 +680,10 @@ def abbrev_state_code(state):
     return _STATE_CODES.get(s.lower(), "")
 
 
-def _norm_name(name):
-    """Loose key for matching the same business across locations: lowercased,
-    punctuation + common legal suffixes stripped."""
-    n = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower())
-    n = re.sub(r"\b(inc|llc|ltd|co|corp|corporation|company|the)\b", " ", n)
-    return re.sub(r"\s+", " ", n).strip()
-
-
-# Mail hosts and site builders anyone can sign up for. Two businesses sharing
-# one of these share a vendor, not an owner, so they must never group.
-GENERIC_DOMAINS = {
-    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.ca", "yahoo.co.uk",
-    "hotmail.com", "hotmail.ca", "outlook.com", "live.com", "live.ca", "msn.com",
-    "aol.com", "icloud.com", "me.com", "mac.com", "protonmail.com", "proton.me",
-    "gmx.com", "zoho.com", "mail.com", "email.com",
-    # Canadian ISP mailboxes — very common for owner-operators
-    "shaw.ca", "telus.net", "rogers.com", "bell.net", "sympatico.ca",
-    "videotron.ca", "cogeco.ca", "eastlink.ca", "xplornet.com",
-    # hosted site builders / directories
-    "wixsite.com", "wix.com", "squarespace.com", "wordpress.com", "weebly.com",
-    "business.site", "godaddysites.com", "myshopify.com", "blogspot.com",
-    "facebook.com", "sites.google.com", "webs.com", "jimdosite.com",
-    "yelp.com", "linktr.ee",
-}
-
-
-def _org_domain(value):
-    """Owning domain from an email address or URL; '' when absent or generic.
-
-    Returning '' for the generic hosts above is the whole point of this helper:
-    a blank key never groups, so two unrelated clinics on gmail stay separate.
-    """
-    v = (value or "").strip().lower()
-    if not v:
-        return ""
-    host = v.rsplit("@", 1)[1] if "@" in v else re.sub(r"^[a-z]+://", "", v)
-    host = re.split(r"[/?#:]", host, 1)[0]
-    if host.startswith("www."):
-        host = host[4:]
-    if "." not in host or host in GENERIC_DOMAINS:
-        return ""
-    # a subdomain of a builder (mysite.wixsite.com) is just as generic
-    if any(host.endswith("." + g) for g in GENERIC_DOMAINS):
-        return ""
-    return host
+# Name/domain normalisers live in dedupe.py (shared with the DB backfill);
+# kept under their old names for the grouping code below.
+_norm_name, _org_domain = dedupe.norm_name, dedupe.org_domain
+GENERIC_DOMAINS = dedupe.GENERIC_DOMAINS
 
 
 def _stamp_location_counts(conn, log=print):
@@ -784,6 +789,58 @@ def _dead_markets(conn, industry_slugs):
     return dead
 
 
+# --- postal / ZIP code search -------------------------------------------------
+# Per-country shape of a postal code. A search by postal code is far narrower than
+# a whole city, which both (a) reaches businesses past Google Maps' ~120-results
+# cap per search area and (b) lets a campaign target a specific territory.
+_POSTCODE_PATTERNS = {
+    "united states": (r"\d{5}(?:-\d{4})?", "5-digit ZIP, e.g. 90210"),
+    "canada": (r"[A-Z]\d[A-Z](?: ?\d[A-Z]\d)?",
+               "postal code like M5V or M5V 2T6"),
+}
+# Any other country: 3-10 letters/digits (spaces and hyphens allowed inside).
+_GENERIC_POSTCODE = r"[A-Z0-9][A-Z0-9 \-]{1,8}[A-Z0-9]"
+# Countries whose postal codes contain a space ('M5V 2T6', 'SW1A 1AA', '1012 AB',
+# 'D02 X285'). Everywhere else a space can only be separating two codes.
+_SPACED_POSTCODE_COUNTRIES = {"canada", "united kingdom", "netherlands", "ireland"}
+
+
+def parse_postcodes(country, raw):
+    """Split a free-text box ('90210, 90211 90212') into (valid, invalid) lists.
+
+    Separators are commas, semicolons, newlines, and spaces except in countries
+    whose codes themselves contain one (a Canadian 'M5V 2T6' keeps its space).
+    Valid codes are upper-cased, normalised and de-duplicated, order preserved."""
+    text = (raw or "").strip().upper()
+    if not text:
+        return [], []
+    key = (country or "").strip().lower()
+    pattern, _hint = _POSTCODE_PATTERNS.get(key, (_GENERIC_POSTCODE, ""))
+    parts = re.split(r"[,;\n]+", text)
+    if key not in _SPACED_POSTCODE_COUNTRIES:
+        parts = [q for p in parts for q in p.split()]
+    valid, invalid, seen = [], [], set()
+    for part in parts:
+        code = re.sub(r"\s+", " ", part).strip()
+        if not code:
+            continue
+        if key == "canada":
+            # 'M5V2T6' and 'M5V 2T6' are the same area: one search, not two.
+            code = re.sub(r"^([A-Z]\d[A-Z]) ?(\d[A-Z]\d)$", r"\1 \2", code)
+        if re.fullmatch(pattern, code):
+            if code not in seen:
+                seen.add(code)
+                valid.append(code)
+        else:
+            invalid.append(code)
+    return valid, invalid
+
+
+def postcode_hint(country):
+    return _POSTCODE_PATTERNS.get((country or "").strip().lower(),
+                                  ("", "3-10 letters/digits"))[1]
+
+
 def _plan_locations(conn, targets, industry_slugs):
     """Decide what order to visit the selected locations in.
 
@@ -880,10 +937,15 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
             c = (l.get("city") or "").strip()
             s = (l.get("state") or "").strip()
             co = (l.get("country") or "").strip()
-            if c or s:
-                label = ", ".join(p for p in (c, s, co) if p)
+            pc = (l.get("postcode") or "").strip()
+            if c or s or pc:
+                # Postal code goes FIRST in the label: it is the narrowest part
+                # of the query, and _dead_markets() reads the text before the
+                # first comma as the "city" — so one barren ZIP can never mark
+                # the whole city as dead.
+                label = ", ".join(p for p in (pc, c, s, co) if p)
                 explicit.append({"label": label, "city": c, "state": s,
-                                 "country": co, "db_id": None})
+                                 "country": co, "postcode": pc, "db_id": None})
         if explicit:
             targets = explicit
         else:
@@ -914,6 +976,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         added_total = 0
         places_seen = 0      # records Outscraper billed us for
         off_industry = 0     # returned, but not in the industry searched for
+        duplicates = 0       # a place (or phone) we already hold
         query_errors = 0
         last_error = ""
         new_lead_ids = []
@@ -1062,6 +1125,24 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
 
                         address = place.get("full_address") or place.get("address") or ""
                         website = place.get("site") or place.get("website") or ""
+                        # Non-US places often come back without a postal code; a
+                        # ZIP/postal-code sweep still knows the area it searched.
+                        postcode = (extract_postcode(place, address)
+                                    or target_loc.get("postcode", ""))
+                        # Same PLACE already held (new tracking number, re-listed
+                        # site, or the same business returned by two overlapping
+                        # ZIPs)? Skip it. A second branch at another address has
+                        # different keys and is kept — see dedupe.py.
+                        keys = dedupe.lead_keys(
+                            name, website, street=place.get("street") or "",
+                            address=address, postcode=postcode,
+                            place_id=place.get("place_id") or place.get("google_id") or "")
+                        matched = dedupe.find_existing(conn, keys)
+                        if matched:
+                            duplicates += 1
+                            _reject(name, "duplicate", category)
+                            log(f"  skipped duplicate ({matched}): {name}")
+                            continue
                         reviews = _as_int(place.get("reviews") or place.get("reviews_count"))
                         rating = _as_float(place.get("rating"))
                         # Outscraper: verified=False => "Claim this business" (unclaimed).
@@ -1085,8 +1166,9 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                             "website, category, industry, score, call_hook, pulled_date, "
                             "email, contact, postcode, search_query, run_id, campaign_id, phone_valid, "
                             "reviews, rating, unclaimed, street_address, maps_url, "
-                            "country, facebook, business_status) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "country, facebook, business_status, place_id, site_key, name_key) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                            "?, ?, ?)",
                             (
                                 phone, name, address,
                                 place.get("city") or target_loc["city"],
@@ -1096,7 +1178,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                                 slug, score, hook, today,
                                 email,
                                 extract_contact(place),
-                                extract_postcode(place, address),
+                                postcode,
                                 query_text, run_id, campaign_id,
                                 0 if needs_phone else 1,
                                 reviews, rating, unclaimed,
@@ -1105,12 +1187,16 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                                 place.get("country") or target_loc["country"],
                                 place.get("facebook") or "",
                                 biz_status,
+                                keys["place_id"], keys["site_key"], keys["name_key"],
                             ),
                         )
-                        if cur.rowcount:  # 0 when the phone was already seen (dedupe)
+                        if cur.rowcount:
                             added_total += 1
                             added_this_query += 1
                             new_lead_ids.append(cur.lastrowid)
+                        else:  # the phone was already seen (UNIQUE phone dedupe)
+                            duplicates += 1
+                            _reject(name, "duplicate", category)
 
                     conn.commit()
                     _update_run(conn, run_id, added=added_total)
@@ -1181,6 +1267,10 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                 validation_note = f"; phone validation failed ({e})"
                 log(f"  WARNING: {e}")
 
+        # Default first: `status = "done"` below sits inside `if places_seen`, so a
+        # pull that fetched zero records (a narrow ZIP with nothing in it) used to
+        # hit an unbound `status` and the run never closed cleanly.
+        status = "done"
         if cancelled:
             message = f"Stopped by user after adding {added_total} leads{validation_note}"
             status = "cancelled"
@@ -1194,6 +1284,8 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                         f"({keep}% keep-rate)")
             if off_industry:
                 message += f" | {off_industry} off-industry dropped"
+            if duplicates:
+                message += f" | {duplicates} duplicates skipped"
             status = "done"
         _update_run(conn, run_id, status=status, finished_at=db.now_iso(),
                     added=added_total, current_city="", message=message)

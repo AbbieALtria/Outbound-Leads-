@@ -21,6 +21,7 @@
     {% if current_user and current_user['role'] == 'admin' %}
     <a href="{{ url_for('activity_page') }}" title="Who pulled what, when — audit log" class="{{ 'active' if request.endpoint == 'activity_page' }}">Activity</a>
     <a href="{{ url_for('users_page') }}" title="Users, per-agent lead caps, and campaign access" class="{{ 'active' if request.endpoint == 'users_page' }}">Users</a>
+    <a href="{{ url_for('outcome_report_page') }}" title="How each scoring signal's leads fared on the phone — read-only, with suggested points" class="{{ 'active' if request.endpoint == 'outcome_report_page' }}">Outcomes</a>
     {% endif %}
     <a href="{{ url_for('help_page') }}" title="How the system works" class="{{ 'active' if request.endpoint == 'help_page' }}">Help</a>
     {% if current_user %}

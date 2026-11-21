@@ -230,9 +230,11 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         never overwriting what Outscraper already found (a paid reveal for an
         email/contact we already have is wasted).
     Returns {checked, enriched, emails, phones, skipped_already_enriched,
-    org_calls, site_hits, site_tried, credits, org_error, error}
+    org_calls, site_hits, site_tried, credits, org_error, error,
+    ai_calls, ai_hits, ai_capped, ai_cache_hits, ai_error}
     where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
-    avoided."""
+    avoided. The ai_* counters are the Claude tier of the website step (see
+    site_contacts.AIBudget); all zero when ANTHROPIC_API_KEY is unset."""
     checked = enriched = emails = phones = skipped = org_calls = site_hits = 0
     org_charged = 0    # lookups that returned data — the ones Apollo bills for
     site_tried = 0     # leads the free website tier could actually attempt
@@ -247,6 +249,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     touched = set()
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     apollo_blocked = False  # set on 401/403 — key/plan can't use the API
+    ai = site_contacts.AIBudget()   # per-run cap + counters for the Claude tier
     for row in lead_rows:
         website = (row["website"] if "website" in row.keys() else "") or ""
         if not website:
@@ -299,7 +302,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
             # already known, is neither a success nor a failure for it.
             site_tried += 1
             try:
-                found = site_contacts.find_team_contact(website)
+                found = site_contacts.find_team_contact(website, ai=ai)
             except Exception:
                 found = {}
             if found.get("name"):
@@ -375,4 +378,4 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
             "phones": phones, "skipped_already_enriched": skipped,
             "org_calls": org_calls, "site_hits": site_hits,
             "site_tried": site_tried, "credits": credits,
-            "org_error": org_error, "error": error}
+            "org_error": org_error, "error": error, **ai.summary()}

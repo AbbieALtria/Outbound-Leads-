@@ -5,6 +5,8 @@
 leads_*.csv
 seen_leads.sqlite3
 rotation_state.json
+# client seed data (names, contacts, phones) lives outside the source
+seed_clients.json
 
 # --- python ---
 __pycache__/

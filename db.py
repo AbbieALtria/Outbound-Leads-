@@ -20,6 +20,8 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
+import dedupe
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Postgres when DATABASE_URL is set, SQLite otherwise. Railway injects
@@ -187,7 +189,7 @@ OFFER_PRESETS = {
             "low_reviews": {"points": 10, "hook": ""},
         },
     },
-    # B2B appointment-setting (e.g. TA Networks ICT: cloud comms, connectivity,
+    # B2B appointment-setting for an ICT provider (cloud comms, connectivity,
     # networking, cabling). Goal is a booked meeting for an AE, not a close. Targets
     # established multi-location businesses, so "no website" is NOT a buy signal here
     # — a real web/comms footprint is; scoring stays light and is tuned per campaign.
@@ -331,7 +333,7 @@ SEED_INDUSTRIES = {
     "real_estate": {"label": "Real Estate Agency", "query": "real estate agency in {city}", "chains": [
         "RE/MAX", "Keller Williams", "Coldwell Banker", "Century 21", "eXp",
         "Berkshire Hathaway", "Compass", "Sotheby's"]},
-    # --- B2B ICT / multi-location targets (e.g. TA Networks appointment-setting) ---
+    # --- B2B ICT / multi-location targets (appointment-setting campaigns) ---
     "hotel": {"label": "Hotel", "query": "hotel in {city}", "chains": [
         "Marriott", "Hilton", "Holiday Inn", "Best Western", "Comfort Inn",
         "Fairfield Inn", "Days Inn", "Super 8"]},
@@ -369,8 +371,10 @@ DEFAULT_SETTINGS = {
     # Outscraper credits per lead; turn off in Settings if not worth it.
     "contact_enrichment": "1",
     # Validate each new lead's phone (line type + drop dead numbers) during the
-    # pull. Costs extra Outscraper credits per number; off by default.
-    "phone_validation": "0",
+    # pull. Costs extra Outscraper credits per number. ON for new installs; a
+    # database that predates the setting keeps OFF (see init_db), and a saved
+    # choice is never changed.
+    "phone_validation": "1",
     # Mine each new lead's Google reviews (earliest review date + recent review
     # text) to power the new_in_market / review_pain_match signals. Outscraper
     # prices reviews SEPARATELY (~$3 per 1,000 reviews); off by default.
@@ -444,6 +448,15 @@ LEAD_EXTRA_COLUMNS = {
     "country": "TEXT NOT NULL DEFAULT ''",              # for geo filtering
     "facebook": "TEXT NOT NULL DEFAULT ''",             # Facebook page URL if listed
     "business_status": "TEXT NOT NULL DEFAULT ''",      # OPERATIONAL / CLOSED_* (connect-rate)
+    # Dedupe keys beyond the UNIQUE phone (see dedupe.py). Not UNIQUE themselves:
+    # legacy rows are blank, and the pull checks them before inserting.
+    "place_id": "TEXT NOT NULL DEFAULT ''",             # Google's listing id
+    "site_key": "TEXT NOT NULL DEFAULT ''",             # website domain | street (or postcode)
+    "name_key": "TEXT NOT NULL DEFAULT ''",             # normalised name | postcode
+    # Email deliverability (email_verify.py): valid / risky / catch_all /
+    # invalid / unknown, '' = never checked. Exports leave out an invalid email.
+    "email_status": "TEXT NOT NULL DEFAULT ''",
+    "email_checked_at": "TEXT",
 }
 
 # Extra columns on pull_runs added after first release.
@@ -815,8 +828,19 @@ def init_db(db_path=DB_FILE):
         "CREATE INDEX IF NOT EXISTS idx_leads_run ON leads(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_leads_campaign ON leads(campaign_id)",
         "CREATE INDEX IF NOT EXISTS idx_runs_campaign ON pull_runs(campaign_id)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_place_id ON leads(place_id)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_site_key ON leads(site_key)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_name_key ON leads(name_key)",
     ):
         conn.execute(ddl)
+
+    # phone_validation defaults ON, but only for a NEW install. A database that
+    # already holds leads yet has no saved value predates the setting and was
+    # running with it off, so it stays off rather than starting to spend credits
+    # on the next pull. A value the user saved is untouched either way.
+    if (get_setting(conn, "phone_validation") is None
+            and conn.execute("SELECT 1 FROM leads LIMIT 1").fetchone()):
+        set_setting(conn, "phone_validation", "0")
 
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -839,10 +863,11 @@ def init_db(db_path=DB_FILE):
     _seed_industries(conn)
     _seed_offers(conn)
     _seed_default_client(conn)
-    _seed_ta_networks(conn)
+    _seed_clients_from_file(conn)
     _migrate_cities(conn)
     _migrate_leads(conn)
     _backfill_lead_fields(conn)
+    _backfill_dedupe_keys(conn)
     _backfill_run_ids(conn)
     _backfill_reviews(conn)
 
@@ -919,39 +944,71 @@ def _seed_default_client(conn):
     )
 
 
-def _seed_ta_networks(conn):
-    """One-time setup for the TA Networks engagement (Canadian ICT provider,
-    Mississauga; B2B appointment-setting per their dialer playbook). Creates the
-    client + the four playbook campaigns (retail, hospitality, professional/legal,
-    clinics). Guarded by a flag so it seeds ONCE and never resurrects if the user
-    edits or deletes it. Industry/geo are optional defaults — the pull picks them."""
-    if get_setting(conn, "seed_ta_networks_v1", "") == "done":
-        return
-    now = now_iso()
-    cur = conn.execute(
-        "INSERT INTO clients (name, contact_name, email, phone, website, address, notes, enabled, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-        ("TA Networks", "Ganshan", "", "1-877-362-6826", "https://tanetworks.ca",
-         "Mississauga, Ontario, Canada",
-         "Canadian ICT: HELLO cloud comms, connectivity (internet/LTE-5G failover), "
-         "networking (Fortinet/Wi-Fi/SD-WAN), cabling. B2B appointment-setting for AEs. "
-         "CRTC / Canadian National DNC rules apply.", now),
-    )
-    client_id = cur.lastrowid
-    # (campaign name, default industry_slug) — the four playbook verticals.
-    for name, industry in (
-        ("TA Networks — Multi-location Retail", "car_dealership"),
-        ("TA Networks — Hospitality & Hotels", "hotel"),
-        ("TA Networks — Professional Services & Legal", "law_firm"),
-        ("TA Networks — Clinics & Healthcare", "dentist"),
-    ):
-        conn.execute(
-            "INSERT INTO campaigns (name, client_id, offer_slug, audience, industry_slug, "
-            "country, state, city, vici_campaign_id, status, created_at) "
-            "VALUES (?, ?, 'ict_appointment', 'b2b', ?, 'Canada', 'Ontario', 'Toronto', '', 'active', ?)",
-            (name, client_id, industry, now),
+# Client seed data (names, contacts, phones) is private business data, so it lives
+# in a JSON file outside the source: SEED_CLIENTS_FILE, else seed_clients.json in
+# DATA_DIR (gitignored). See seed_clients.example.json for the shape.
+SEED_CLIENTS_FILE = Path(os.environ.get("SEED_CLIENTS_FILE") or (DATA_DIR / "seed_clients.json"))
+
+
+def _seed_flag(entry):
+    """Settings key that records an entry as seeded. An explicit "flag" keeps older
+    databases on the key they already hold, so nothing re-seeds after this move."""
+    flag = (entry.get("flag") or "").strip()
+    if flag:
+        return flag
+    slug = re.sub(r"[^a-z0-9]+", "_", (entry.get("name") or "").lower()).strip("_")
+    return f"seed_client_{slug}_v1"
+
+
+def _seed_clients_from_file(conn, path=None):
+    """One-time setup of client engagements listed in the seed file: each entry
+    creates the client plus its campaigns. Every entry is guarded by its own flag
+    so it seeds ONCE and never resurrects if the user edits or deletes it. With no
+    file (the normal case) this does nothing. Industry/geo on a campaign are only
+    defaults — the pull picks them. Returns the number of clients seeded."""
+    path = Path(path) if path else SEED_CLIENTS_FILE
+    if not path.is_file():
+        return 0
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        # A broken seed file must not stop the app from starting.
+        print(f"[seed] ignoring {path}: {e}")
+        return 0
+    if not isinstance(entries, list):
+        print(f"[seed] ignoring {path}: expected a JSON list of clients")
+        return 0
+    seeded = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or not (entry.get("name") or "").strip():
+            continue
+        flag = _seed_flag(entry)
+        if get_setting(conn, flag, "") == "done":
+            continue
+        now = now_iso()
+        cur = conn.execute(
+            "INSERT INTO clients (name, contact_name, email, phone, website, address, "
+            "notes, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (entry["name"].strip(), entry.get("contact_name") or "", entry.get("email") or "",
+             entry.get("phone") or "", entry.get("website") or "", entry.get("address") or "",
+             entry.get("notes") or "", now),
         )
-    set_setting(conn, "seed_ta_networks_v1", "done")
+        client_id = cur.lastrowid
+        for camp in entry.get("campaigns") or []:
+            if not isinstance(camp, dict) or not (camp.get("name") or "").strip():
+                continue
+            conn.execute(
+                "INSERT INTO campaigns (name, client_id, offer_slug, audience, industry_slug, "
+                "country, state, city, vici_campaign_id, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+                (camp["name"].strip(), client_id, camp.get("offer_slug") or "",
+                 camp.get("audience") or "b2b", camp.get("industry_slug") or "",
+                 camp.get("country") or "", camp.get("state") or "", camp.get("city") or "",
+                 camp.get("vici_campaign_id") or "", now),
+            )
+        set_setting(conn, flag, "done")
+        seeded += 1
+    return seeded
 
 
 def _backfill_reviews(conn):
@@ -992,6 +1049,25 @@ def _backfill_lead_fields(conn):
         if m:
             conn.execute("UPDATE leads SET postcode = ? WHERE id = ?",
                          (m.group(1), row["id"]))
+
+
+def _backfill_dedupe_keys(conn):
+    """Compute site_key/name_key for rows that predate the columns, so a
+    re-listed business already held is caught by the pull. place_id cannot be
+    recovered (it was never stored). Runs once; new rows get keys on insert.
+    Runs after _backfill_lead_fields, which fills the postcode the keys need."""
+    if get_setting(conn, "dedupe_keys_v1", "") == "done":
+        return
+    rows = conn.execute(
+        "SELECT id, business_name, website, street_address, address, postcode "
+        "FROM leads WHERE site_key = '' AND name_key = ''").fetchall()
+    for r in rows:
+        k = dedupe.lead_keys(r["business_name"], r["website"], r["street_address"],
+                             r["address"], r["postcode"])
+        if k["site_key"] or k["name_key"]:
+            conn.execute("UPDATE leads SET site_key = ?, name_key = ? WHERE id = ?",
+                         (k["site_key"], k["name_key"], r["id"]))
+    set_setting(conn, "dedupe_keys_v1", "done")
 
 
 def _backfill_run_ids(conn):

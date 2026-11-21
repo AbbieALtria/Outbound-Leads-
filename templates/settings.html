@@ -58,6 +58,12 @@
       </label>
       <button type="submit" class="primary">Save</button>
     </form>
+    <p class="dim small" style="margin:8px 0 4px;">Email verification —
+      {% if email_verify_enabled %}<strong style="color:var(--green)">{{ email_verify_provider }} key present</strong>.
+      {% else %}set <code>EMAIL_VERIFY_API_KEY</code> (and <code>EMAIL_VERIFY_PROVIDER</code>
+      if not <code>zerobounce</code>) in Railway to enable.{% endif %}
+      One credit per address checked, always behind a count-and-cost confirmation;
+      an email marked invalid is left out of exports.</p>
     <div class="api-status">
       Outscraper API key:
       {% if api_key_set %}
