@@ -14,10 +14,12 @@ Dormant unless ANTHROPIC_API_KEY is set (env / Railway variable — never in cod
 the DB, or the UI), same pattern as OUTSCRAPER_API_KEY / APOLLO_API_KEY.
 """
 
-import os
 import re
 
-MODEL = "claude-sonnet-5"
+import claude_config
+
+# Shared with site_contacts.py; change it (or set ANTHROPIC_MODEL) in one place.
+MODEL = claude_config.MODEL
 
 # Shape we ask Claude to return. Structured outputs guarantee it parses.
 SUGGESTION_SCHEMA = {
@@ -51,7 +53,7 @@ SUGGESTION_SCHEMA = {
 
 def enabled():
     """True when the Anthropic API key is configured."""
-    return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    return claude_config.enabled()
 
 
 def _slugify(text):

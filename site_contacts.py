@@ -13,12 +13,22 @@ enrichment waterfall, before any paid provider.
 Deliberately conservative: it would rather return nothing than a wrong name, so
 every candidate needs either a Dr./credential marker or an explicit
 decision-maker title next to it.
+
+Optional second tier (see "Claude tier" at the bottom): when the patterns find
+nobody and ANTHROPIC_API_KEY is set, the cleaned page text goes to Claude, which
+returns decision-makers as structured output. Every name it returns must appear
+verbatim in the page text, with the exact quote it came from, or it is dropped.
+The regex tier stays the fallback and the only path without a key.
 """
 
+import json
+import os
 import re
 from urllib.parse import urljoin, urlparse
 
 import requests
+
+import claude_config
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; lead-research)"}
 
@@ -196,12 +206,16 @@ def team_page_urls(base_url, html):
     return urls
 
 
-def find_team_contact(website, timeout=6, max_pages=2):
+def find_team_contact(website, timeout=6, max_pages=2, ai=None):
     """Best decision-maker published on the business's own site.
     Returns {name, title, source_url} or {} when nothing credible is found.
 
     Time-bounded on purpose: at most 1 + max_pages requests at `timeout` seconds
-    each, so one slow site can't stall a whole enrichment batch."""
+    each, so one slow site can't stall a whole enrichment batch.
+
+    `ai`: an AIBudget for this run. When given, and a key is set, pages the
+    patterns found nobody on are read by Claude (one call per domain, cached,
+    capped per run). Without it — or without a key — only the patterns run."""
     url = (website or "").strip()
     if not url:
         return {}
@@ -211,16 +225,185 @@ def find_team_contact(website, timeout=6, max_pages=2):
     home = _fetch(url, timeout)
     if not home:
         return {}
+    texts = []    # (page_url, cleaned text) the patterns drew a blank on
     # The homepage itself often names the principal ("Meet Dr. Patel").
-    people = extract_people(_strip_html(home))
+    text = _strip_html(home)
+    people = extract_people(text)
     if people:
         return {**people[0], "source_url": url}
+    texts.append((url, text))
 
     for page in team_page_urls(url, home)[:max_pages]:
         html = _fetch(page, timeout)
         if not html:
             continue
-        people = extract_people(_strip_html(html))
+        text = _strip_html(html)
+        people = extract_people(text)
         if people:
             return {**people[0], "source_url": page}
+        texts.append((page, text))
+
+    if ai is not None and ai_enabled():
+        return ai_team_contact(url, texts, ai)
     return {}
+
+
+# --- Claude tier -----------------------------------------------------------------
+# Runs only when the patterns above found nobody AND ANTHROPIC_API_KEY is set.
+# The guards against a made-up name are mechanical, not prompt-based: a name is
+# accepted only if it appears verbatim in the page text, inside the quote the
+# model copied, with confidence >= AI_MIN_CONFIDENCE. Each domain is asked once
+# per process (cache) and each run makes at most AIBudget.cap calls.
+
+AI_MAX_CHARS = 12000          # page text sent per call (about 3k tokens)
+AI_MIN_CONFIDENCE = 0.7
+AI_DEFAULT_MAX_CALLS = int(os.environ.get("SITE_CONTACTS_AI_MAX_CALLS", "40"))
+
+PEOPLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "people": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string",
+                             "description": "The person's name exactly as written in the text"},
+                    "title": {"type": "string",
+                              "description": "Their role at this business, as the text gives it (Owner, Dr., Practice Manager...)"},
+                    "confidence": {"type": "number",
+                                   "description": "0-1: how sure you are this person makes buying decisions at THIS business"},
+                    "quote": {"type": "string",
+                              "description": "The exact passage from the text, copied verbatim, in which this person and their role appear"},
+                },
+                "required": ["name", "title", "confidence", "quote"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["people"],
+    "additionalProperties": False,
+}
+
+AI_SYSTEM = (
+    "You read the text of a local business's own website and list the people who "
+    "run it: owner, founder, principal, the doctor/dentist/lawyer whose practice it "
+    "is, practice or office manager, general manager. Only list a person whose name "
+    "appears in the text exactly as you write it, and copy the exact passage where "
+    "the name and role appear into `quote` without changing a character. Do not "
+    "list testimonial authors, patients, suppliers, or people mentioned in passing. "
+    "Confidence is how sure you are this person makes buying decisions at this "
+    "business. When the text names nobody who runs the business, return an empty list."
+)
+
+_ai_cache = {}    # domain -> result dict ({} when nothing credible), for the process lifetime
+
+
+class AIBudget:
+    """Per-run cap on Claude calls, plus the counters the run reports."""
+
+    def __init__(self, cap=None):
+        self.cap = AI_DEFAULT_MAX_CALLS if cap is None else cap
+        self.calls = 0        # requests actually sent
+        self.hits = 0         # contacts the tier supplied (cached ones included)
+        self.capped = 0       # domains skipped because the cap was reached
+        self.cache_hits = 0   # domains answered from the cache, no request
+        self.error = ""       # first API failure, if any
+
+    def allow(self):
+        if self.calls >= self.cap:
+            self.capped += 1
+            return False
+        return True
+
+    def summary(self):
+        return {"ai_calls": self.calls, "ai_hits": self.hits, "ai_capped": self.capped,
+                "ai_cache_hits": self.cache_hits, "ai_error": self.error}
+
+
+def ai_enabled():
+    return claude_config.enabled()
+
+
+def _client():
+    import anthropic
+    return anthropic.Anthropic()    # reads ANTHROPIC_API_KEY from the env
+
+
+def _domain(url):
+    host = urlparse(url).netloc.lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def ai_extract_people(text, budget, client=None, model=None):
+    """Decision-makers Claude finds in `text`, best-first, each
+    {name, title, confidence, quote}. Only people whose name appears verbatim in
+    the text, inside their quote, with confidence >= AI_MIN_CONFIDENCE survive.
+    Spends one call against `budget` (none when the cap is reached)."""
+    text = _clean(text)[:AI_MAX_CHARS]
+    if not text or not budget.allow():
+        return []
+    budget.calls += 1
+    try:
+        client = client or _client()
+        resp = client.messages.create(
+            model=model or claude_config.MODEL,
+            max_tokens=2000,
+            system=AI_SYSTEM,
+            output_config={"format": {"type": "json_schema", "schema": PEOPLE_SCHEMA},
+                           "effort": "low"},
+            messages=[{"role": "user", "content": f"PAGE TEXT:\n{text}"}],
+        )
+    except Exception as e:                 # noqa: BLE001 - never let the tier break a batch
+        budget.error = budget.error or str(e)
+        return []
+    if resp.stop_reason == "refusal":
+        return []
+    raw = next((b.text for b in resp.content if b.type == "text"), "")
+    try:
+        data = json.loads(raw or "{}")
+    except ValueError:
+        return []
+    accepted = []
+    for p in data.get("people") or []:
+        if not isinstance(p, dict):
+            continue
+        name, title, quote = _clean(p.get("name")), _clean(p.get("title")), _clean(p.get("quote"))
+        try:
+            conf = float(p.get("confidence") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        if not name or not title or conf < AI_MIN_CONFIDENCE:
+            continue
+        # The anti-hallucination check: the name must be in the page, in the
+        # passage the model says it came from, and that passage must be real.
+        if name not in text or quote not in text or name not in quote:
+            continue
+        accepted.append({"name": name, "title": title, "confidence": conf, "quote": quote})
+    accepted.sort(key=lambda p: -p["confidence"])
+    return accepted
+
+
+def ai_team_contact(url, texts, ai, client=None):
+    """The Claude tier for one site: `texts` are the (page_url, text) pairs the
+    patterns found nobody on. One call per domain per process; the team page is
+    preferred over the homepage because that is where people are named."""
+    domain = _domain(url)
+    if domain in _ai_cache:
+        ai.cache_hits += 1
+        result = _ai_cache[domain]
+    else:
+        candidates = [t for t in texts if len(t[1]) > 200]
+        if not candidates:
+            return {}
+        page_url, text = (candidates[1:] or candidates)[0]
+        before = ai.calls
+        people = ai_extract_people(text, ai, client)
+        result = ({**people[0], "source_url": page_url, "via": "ai"} if people else {})
+        if ai.calls > before:
+            # Only a real answer is cached. A domain skipped at the cap (no call
+            # made) must not be remembered as "nobody here" for the next run.
+            _ai_cache[domain] = result
+    if result:
+        ai.hits += 1
+    return result

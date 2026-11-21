@@ -30,6 +30,13 @@ is configurable, and an optional password gate protects it.
      provider credit and is always confirmed with a count and cost first; an
      email marked invalid is left out of exports. Without the key the feature
      is dormant and costs nothing.
+   - (optional) `ANTHROPIC_API_KEY=<key>` — turns on the two Claude features:
+     AI industry suggestions on a campaign, and reading a business's About/Team
+     page for a decision-maker when the free pattern matcher finds nobody. A
+     name is kept only if it appears verbatim on the page; one call per domain,
+     at most `SITE_CONTACTS_AI_MAX_CALLS` (default 40) per enrichment run, and
+     the run reports how many pages were read. `ANTHROPIC_MODEL` overrides the
+     model (default in `claude_config.py`). Without the key both are dormant.
    - (optional) `SEED_CLIENTS_FILE=<path>` — a JSON list of client engagements
      (client + campaigns) to create once on first start; see
      `seed_clients.example.json`. Without it, or `seed_clients.json` in

@@ -639,6 +639,15 @@ if (enrichBtn) {
   // one on screen.
   const siteRate = (r) =>
     r.site_tried ? ` (${Math.round((100 * (r.site_hits || 0)) / r.site_tried)}%)` : "";
+  // The Claude tier of the website step: how many pages it read (each one an
+  // API call) and what it found — so the cost of the AI step is on screen.
+  const aiNote = (r) => {
+    if (!r.ai_calls && !r.ai_capped) return "";
+    let s = ` Claude read ${r.ai_calls || 0} page${r.ai_calls === 1 ? "" : "s"} and named ${r.ai_hits || 0}.`;
+    if (r.ai_capped) s += ` ${r.ai_capped} skipped at the per-run cap.`;
+    if (r.ai_error) s += ` Claude error: ${r.ai_error}`;
+    return s;
+  };
 
   const pollEnrich = async () => {
     let s;
@@ -676,7 +685,7 @@ if (enrichBtn) {
       eresult.className = "pull-result ok";
       eresult.textContent =
         `Found ${r.site_hits || 0} of ${r.site_tried || 0} decision-makers free from ` +
-        `company websites${siteRate(r)}. ` +
+        `company websites${siteRate(r)}.${aiNote(r)} ` +
         // With no provider configured nothing was searched and nothing skipped
         // "already-enriched" — saying so invents work that never happened.
         (!r.checked && !r.org_calls

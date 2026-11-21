@@ -169,6 +169,11 @@
         {{ last_enrich.get('site_tried', 0) }} decision-makers free from company websites{%
           if last_enrich.get('site_tried') %} ({{ (100 * last_enrich.get('site_hits', 0) //
           last_enrich['site_tried']) }}%){% endif %}.
+        {% if last_enrich.get('ai_calls') or last_enrich.get('ai_capped') %}
+        Claude read <strong>{{ last_enrich.get('ai_calls', 0) }}</strong> page{{ 's' if last_enrich.get('ai_calls') != 1 }}
+        and named {{ last_enrich.get('ai_hits', 0) }}{% if last_enrich.get('ai_capped') %};
+        {{ last_enrich['ai_capped'] }} skipped at the per-run cap{% endif %}.
+        {% endif %}
         {% if not last_enrich.get('checked') and not last_enrich.get('org_calls') %}
         No paid provider configured — nothing searched, no credits spent.
         {% else %}
