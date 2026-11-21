@@ -1,0 +1,17 @@
+[
+  {
+    "flag": "seed_example_client_v1",
+    "name": "Example Client Inc.",
+    "contact_name": "Jane Doe",
+    "email": "jane@example.com",
+    "phone": "1-555-010-0000",
+    "website": "https://example.com",
+    "address": "Toronto, Ontario, Canada",
+    "notes": "What they sell and any calling rules that apply (e.g. CRTC / National DNC).",
+    "campaigns": [
+      {"name": "Example Client — Retail", "industry_slug": "car_dealership",
+       "offer_slug": "ict_appointment", "audience": "b2b",
+       "country": "Canada", "state": "Ontario", "city": "Toronto"}
+    ]
+  }
+]

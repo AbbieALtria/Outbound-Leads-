@@ -8,7 +8,9 @@ from the Outscraper (Google Maps) API.
 The app is deploy-ready: `Procfile` runs gunicorn, it binds `$PORT`, the DB path
 is configurable, and an optional password gate protects it.
 
-1. **Push to GitHub** (private repo — it's a business tool):
+1. **Push to GitHub.** Make the repo **private** (Settings → Danger Zone →
+   Change visibility): it's a business tool, and nothing in the code prevents
+   it from being public.
    ```
    git remote add origin https://github.com/<you>/<repo>.git
    git push -u origin main
@@ -23,6 +25,11 @@ is configurable, and an optional password gate protects it.
    - `APP_PASSWORD=<a strong password>` — **without this the site is wide open** to
      anyone with the URL, including the credit-spending "Pull New Leads" button
    - (later) `APIFY_TOKEN=<token>` for the Apify bulk-pull path
+   - (optional) `SEED_CLIENTS_FILE=<path>` — a JSON list of client engagements
+     (client + campaigns) to create once on first start; see
+     `seed_clients.example.json`. Without it, or `seed_clients.json` in
+     `DATA_DIR`, nothing is seeded. Client names, contacts and phones are
+     never kept in the source.
 5. Open the Railway URL. The browser will ask for a login — use **any username**
    and the `APP_PASSWORD` you set.
 
