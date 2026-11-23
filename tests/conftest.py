@@ -6,8 +6,22 @@ anything is imported keeps every test off the real leads.db, and clearing the
 provider keys keeps every paid integration dormant (tests mock the rest)."""
 import os
 import pathlib
+import socket
 import sys
 import tempfile
+
+# No test may reach the network: every provider is mocked, and CI runs with no
+# secrets. Any attempt to open an outbound connection fails loudly here, so a
+# test that silently depended on a live API cannot pass locally and fail in CI.
+
+
+def _blocked_connect(self, address):
+    raise RuntimeError(f"tests must not use the network (tried to connect to {address!r})")
+
+
+socket.socket.connect = _blocked_connect
+socket.socket.connect_ex = lambda self, address: (_ for _ in ()).throw(
+    RuntimeError(f"tests must not use the network (tried to connect to {address!r})"))
 
 _tmp = tempfile.mkdtemp(prefix="seo_leads_tests_")
 os.environ["DATA_DIR"] = _tmp

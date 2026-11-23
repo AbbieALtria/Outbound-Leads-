@@ -18,6 +18,7 @@ import time
 
 import requests
 
+import budget
 import db
 
 STATUSES = ("valid", "risky", "catch_all", "invalid", "unknown")
@@ -94,10 +95,18 @@ def verify_leads(conn, rows, log=print, prov=None, pause=0.0):
     and is reported in the summary's "error". Returns counts per status plus
     checked, credits (worst case: credits_per_check × checked) and error."""
     summary = {s: 0 for s in STATUSES}
-    summary.update(checked=0, credits=0, error="")
+    summary.update(checked=0, credits=0, error="", cap_note="")
     prov = prov or provider()
     rows = [r for r in rows if (r["email"] or "").strip()]
     if prov is None or not rows:
+        return summary
+    # Daily cap: check only what today still allows; the rest wait for tomorrow.
+    allowed = budget.allowance(conn, "email", len(rows))
+    capped = allowed < len(rows)
+    rows = rows[:allowed]
+    if not rows:
+        summary["cap_note"] = budget.cap_message(conn, "email")
+        log(f"  {summary['cap_note']}")
         return summary
     log(f"Verifying {len(rows)} email addresses via {prov.name}...")
     for r in rows:
@@ -121,4 +130,8 @@ def verify_leads(conn, rows, log=print, prov=None, pause=0.0):
         if pause:
             time.sleep(pause)
     conn.commit()
+    budget.record(conn, "email", summary["checked"])
+    if capped:
+        summary["cap_note"] = budget.cap_message(conn, "email")
+        log(f"  {summary['cap_note']}")
     return summary

@@ -91,7 +91,7 @@ def test_verify_lead_phones_leaves_unmatched_numbers_unvalidated(monkeypatch, tm
     ])                                                  # nothing came back for B
     rows = conn.execute("SELECT id, phone FROM leads").fetchall()
     summary = pipeline.verify_lead_phones(conn, "k", rows, log=lambda *_: None)
-    assert summary == {"checked": 2, "invalid": 1, "unmatched": 1}
+    assert summary == {"checked": 2, "invalid": 1, "unmatched": 1, "cap_note": ""}
     got = {r["phone"]: (r["phone_valid"], r["validated_at"] is not None) for r in
            conn.execute("SELECT phone, phone_valid, validated_at FROM leads")}
     assert got[A] == (1, True)

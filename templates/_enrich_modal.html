@@ -31,6 +31,12 @@
     <p class="dim small">No Apollo key is set. Add <code>APOLLO_API_KEY</code> in
       Railway to also search a paid database.</p>
     {% endif %}
+    {# Apollo is asked about a lead or a company once; this is the only way to
+       ask again, and it is a deliberate, per-run choice. #}
+    <label class="chk-row small" style="margin-top:6px;">
+      <input type="checkbox" id="enrich-force">
+      Re-check leads and companies Apollo was already asked about (spends credits on the same lookups again)
+    </label>
     <p style="text-align:right;margin-bottom:0;">
       <button type="button" class="button" id="enrich-cancel">Cancel</button>
       <button type="button" class="primary" id="enrich-confirm">Yes, enrich these leads</button>

@@ -552,6 +552,7 @@ if (emailBtn) {
       `${r.valid || 0} valid, ${r.risky || 0} risky, ${r.catch_all || 0} catch-all, ` +
       `${r.invalid || 0} invalid, ${r.unknown || 0} unknown. ` +
       `Up to ${r.credits || 0} credit${r.credits === 1 ? "" : "s"} spent.` +
+      (r.cap_note ? ` ${r.cap_note}.` : "") +
       (r.error ? ` Stopped early: ${r.error}` : ""));
     setTimeout(() => location.reload(), 6000);
   };
@@ -648,6 +649,8 @@ if (enrichBtn) {
     if (r.ai_error) s += ` Claude error: ${r.ai_error}`;
     return s;
   };
+  // A daily cap that stopped a provider mid-run (Apollo, Claude).
+  const capNote = (r) => (r.cap_note ? ` ${r.cap_note}.` : "");
 
   const pollEnrich = async () => {
     let s;
@@ -685,7 +688,7 @@ if (enrichBtn) {
       eresult.className = "pull-result ok";
       eresult.textContent =
         `Found ${r.site_hits || 0} of ${r.site_tried || 0} decision-makers free from ` +
-        `company websites${siteRate(r)}.${aiNote(r)} ` +
+        `company websites${siteRate(r)}.${aiNote(r)}${capNote(r)} ` +
         // With no provider configured nothing was searched and nothing skipped
         // "already-enriched" — saying so invents work that never happened.
         (!r.checked && !r.org_calls
@@ -737,6 +740,9 @@ if (enrichBtn) {
         Object.assign(payload, JSON.parse(enrichBtn.dataset.filters || "{}"));
       } catch { /* no filters on this page */ }
       if (ids.length) payload.lead_ids = ids;      // only the checked rows
+      // Explicit re-enrich: leads/companies Apollo already answered about are
+      // otherwise skipped so the same lookup is never paid for twice.
+      payload.force = !!document.getElementById("enrich-force")?.checked;
       const r = await postJSON("/api/enrich_contacts", payload);
       eresult.textContent = `Enriching ${r.count} leads…`;
       pollEnrich();

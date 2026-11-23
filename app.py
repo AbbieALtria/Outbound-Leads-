@@ -21,6 +21,7 @@ from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 
 import ai_industries
+import budget
 import nppes
 import compliance
 import contacts
@@ -36,16 +37,21 @@ import outcome_report
 import pipeline
 import requeue
 import scoring
+import security
 import users
 from dialer_import import normalize_phone
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
-# Signs the login session cookie. Stable across restarts when set in the env so
-# users aren't logged out on every redeploy.
-app.secret_key = (os.environ.get("SECRET_KEY")
-                  or os.environ.get("ADMIN_PASSWORD")
-                  or os.environ.get("APP_PASSWORD")
-                  or "local-dev-secret-key")
+# Signs the login session cookie. In production it MUST come from SECRET_KEY
+# (the app refuses to start otherwise — see security.py); locally a random
+# per-process key is used, so no value in the source can ever sign a cookie.
+app.secret_key = security.secret_key()
+app.config.update(security.cookie_settings())
+if security.is_production():
+    # Railway terminates TLS at its proxy: trust its X-Forwarded-* headers so
+    # request.is_secure and the client IP (sign-in attempt limit) are right.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # Initialize the database at import time so it works under gunicorn (which never
 # runs the __main__ block below), not only when started via `python app.py`.
@@ -179,13 +185,24 @@ def login():
     conn = get_db()
     error = None
     if request.method == "POST":
-        user = users.authenticate(conn, request.form.get("username", ""),
-                                  request.form.get("password", ""))
+        username = request.form.get("username", "")
+        ip = security.client_ip(request)
+        # Attempt limit: after LOCKOUT_ATTEMPTS failures for this username or
+        # this IP within the window, nothing is even checked until it expires.
+        wait = security.lockout_seconds(conn, username, ip)
+        if wait:
+            minutes = max(1, -(-wait // 60))
+            error = (f"Too many failed sign-in attempts. Try again in {minutes} "
+                     f"minute{'s' if minutes != 1 else ''}.")
+            return render_template("login.html", error=error), 429
+        user = users.authenticate(conn, username, request.form.get("password", ""))
         if user:
+            security.clear_failures(conn, username, ip)
             session.clear()
             session["user_id"] = user["id"]
             dest = request.args.get("next") or url_for("dashboard")
             return redirect(dest if dest.startswith("/") else url_for("dashboard"))
+        security.record_failure(conn, username, ip)
         error = "Wrong username or password."
     return render_template("login.html", error=error)
 
@@ -611,8 +628,11 @@ def campaign_suggest_industries(campaign_id):
     if not ai_industries.enabled():
         error = ("AI suggestions are off — set ANTHROPIC_API_KEY in Railway → "
                  "Variables to enable them.")
+    elif budget.remaining(conn, "claude") == 0:
+        error = budget.cap_message(conn, "claude") + " — try again tomorrow or raise the cap in Settings."
     else:
         try:
+            budget.record(conn, "claude", 1)
             suggestions = ai_industries.suggest(
                 camp["name"], offer["name"] if offer else "",
                 existing, country=camp["country"] or "")
@@ -1012,6 +1032,7 @@ def settings():
         apollo_key_tail=_key_tail(contacts.api_key()),
         email_verify_enabled=email_verify.enabled(),
         email_verify_provider=email_verify.provider_name(),
+        caps=budget.usage_report(conn),
         storage=storage_status(conn),
     )
 
@@ -2285,12 +2306,13 @@ def verify_emails_status():
 _enrich_lock = threading.Lock()
 
 
-def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_id=None):
+def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_id=None,
+                   force=False):
     try:
         conn = db.connect()
         rows = conn.execute(
-            f"SELECT id, website, contact, email, employee_count FROM leads "
-            f"WHERE id IN ({','.join('?' * len(lead_ids))})",
+            f"SELECT id, website, contact, email, employee_count, apollo_checked_at "
+            f"FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
             lead_ids,
         ).fetchall()
         # Company lookups cost a credit each and feed only company_size_fit, so
@@ -2299,7 +2321,7 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_
         result = contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
                                        reveal_phone=reveal_phone,
                                        want_company_size=want_size,
-                                       log=lambda *_: None)
+                                       force=force, log=lambda *_: None)
         # Record what was actually spent, not the estimate — the budget must
         # track real usage, and a run that finds nothing still costs lookups.
         users.record_credits(conn, user_id, result.get("credits", 0),
@@ -2387,10 +2409,15 @@ def enrich_contacts():
                 f"admin to raise your credit limit."}), 403
     if not _enrich_lock.acquire(blocking=False):
         return jsonify({"error": "An enrichment run is already in progress"}), 409
+    # Leads and domains Apollo has already been asked about are skipped unless
+    # the admin ticked "re-check" in the confirmation: that is the one way to
+    # spend a credit on the same lookup twice.
+    force = bool(args.get("force"))
     threading.Thread(
         target=_enrich_worker,
         args=(lead_ids, reveal_email, reveal_phone, campaign_id,
-              user["id"] if user else None), daemon=True
+              user["id"] if user else None),
+        kwargs={"force": force}, daemon=True
     ).start()
     return jsonify({"ok": True, "count": len(lead_ids)})
 
@@ -2585,6 +2612,8 @@ def edit_campaign(campaign_id):
         kws = [k.strip() for k in request.form.get("pain_keywords", "").split(",") if k.strip()]
         conn.execute("UPDATE offers SET pain_keywords = ? WHERE id = ?",
                      (json.dumps(kws), campaign_id))
+    # A person touched this offer: the preset refresh must leave it alone from now on.
+    conn.execute("UPDATE offers SET user_edited = 1 WHERE id = ?", (campaign_id,))
     conn.commit()
     return redirect(url_for("settings"))
 
@@ -2637,6 +2666,11 @@ def save_general_settings():
                    "1" if request.form.get("enrich_reveal_email") else "0")
     db.set_setting(conn, "enrich_reveal_phone",
                    "1" if request.form.get("enrich_reveal_phone") else "0")
+    # Daily caps per paid provider. 0 is "no limit" and only ever set on purpose.
+    for key, _label, _unit, _default in budget.PROVIDERS:
+        raw = (request.form.get(f"cap_{key}") or "").strip()
+        if raw.isdigit():
+            budget.set_cap(conn, key, int(raw))
     conn.commit()
     return redirect(url_for("settings"))
 

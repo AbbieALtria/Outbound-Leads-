@@ -24,6 +24,12 @@ is configurable, and an optional password gate protects it.
    - `OUTSCRAPER_API_KEY=<your key>`
    - `APP_PASSWORD=<a strong password>` — **without this the site is wide open** to
      anyone with the URL, including the credit-spending "Pull New Leads" button
+   - `SECRET_KEY=<a long random string>` — **required on Railway**: it signs the
+     login cookie, and the app refuses to start in production without it
+     (generate one with `python -c "import secrets; print(secrets.token_hex(32))"`).
+     Locally a random key is made on each start. Sign-in is also rate-limited:
+     5 failed attempts for a username or an IP within 15 minutes locks that
+     username/IP out for 15 minutes, and the lock expires on its own.
    - (later) `APIFY_TOKEN=<token>` for the Apify bulk-pull path
    - (optional) `EMAIL_VERIFY_API_KEY=<key>` (+ `EMAIL_VERIFY_PROVIDER`, default
      `zerobounce`) — turns on the **Verify emails** button. Each check costs a
@@ -76,6 +82,20 @@ python app.py
 ```
 
 then open http://localhost:5000
+
+## Running tests
+
+```
+pip install -r requirements.txt pytest
+python -m pytest tests -q
+```
+
+The suite needs no API keys and no network: every paid provider is mocked and
+`tests/conftest.py` blocks outbound connections, so a test that reached a live
+API would fail rather than spend credits. It also points the data folder at a
+temporary directory, so it never touches your `leads.db`. GitHub Actions runs
+the same command on every push and pull request
+(`.github/workflows/tests.yml`), on the Python version in `.python-version`.
 
 ## One-time setup
 
