@@ -692,6 +692,17 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 CREATE INDEX IF NOT EXISTS idx_campaigns_vici ON campaigns(vici_campaign_id);
 
+-- Failed sign-in attempts (security.py). Kept in the database so every worker
+-- shares the count; rows older than the lockout window are pruned on each check.
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT '',
+    attempted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts(username, attempted_at);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip, attempted_at);
+
 -- Paid calls per provider per day (budget.py). One row per provider and day so
 -- every worker counts against the same daily cap.
 CREATE TABLE IF NOT EXISTS provider_usage (

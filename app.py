@@ -37,16 +37,21 @@ import outcome_report
 import pipeline
 import requeue
 import scoring
+import security
 import users
 from dialer_import import normalize_phone
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
-# Signs the login session cookie. Stable across restarts when set in the env so
-# users aren't logged out on every redeploy.
-app.secret_key = (os.environ.get("SECRET_KEY")
-                  or os.environ.get("ADMIN_PASSWORD")
-                  or os.environ.get("APP_PASSWORD")
-                  or "local-dev-secret-key")
+# Signs the login session cookie. In production it MUST come from SECRET_KEY
+# (the app refuses to start otherwise — see security.py); locally a random
+# per-process key is used, so no value in the source can ever sign a cookie.
+app.secret_key = security.secret_key()
+app.config.update(security.cookie_settings())
+if security.is_production():
+    # Railway terminates TLS at its proxy: trust its X-Forwarded-* headers so
+    # request.is_secure and the client IP (sign-in attempt limit) are right.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # Initialize the database at import time so it works under gunicorn (which never
 # runs the __main__ block below), not only when started via `python app.py`.
@@ -180,13 +185,24 @@ def login():
     conn = get_db()
     error = None
     if request.method == "POST":
-        user = users.authenticate(conn, request.form.get("username", ""),
-                                  request.form.get("password", ""))
+        username = request.form.get("username", "")
+        ip = security.client_ip(request)
+        # Attempt limit: after LOCKOUT_ATTEMPTS failures for this username or
+        # this IP within the window, nothing is even checked until it expires.
+        wait = security.lockout_seconds(conn, username, ip)
+        if wait:
+            minutes = max(1, -(-wait // 60))
+            error = (f"Too many failed sign-in attempts. Try again in {minutes} "
+                     f"minute{'s' if minutes != 1 else ''}.")
+            return render_template("login.html", error=error), 429
+        user = users.authenticate(conn, username, request.form.get("password", ""))
         if user:
+            security.clear_failures(conn, username, ip)
             session.clear()
             session["user_id"] = user["id"]
             dest = request.args.get("next") or url_for("dashboard")
             return redirect(dest if dest.startswith("/") else url_for("dashboard"))
+        security.record_failure(conn, username, ip)
         error = "Wrong username or password."
     return render_template("login.html", error=error)
 
