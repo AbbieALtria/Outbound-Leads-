@@ -737,6 +737,9 @@ if (enrichBtn) {
         Object.assign(payload, JSON.parse(enrichBtn.dataset.filters || "{}"));
       } catch { /* no filters on this page */ }
       if (ids.length) payload.lead_ids = ids;      // only the checked rows
+      // Explicit re-enrich: leads/companies Apollo already answered about are
+      // otherwise skipped so the same lookup is never paid for twice.
+      payload.force = !!document.getElementById("enrich-force")?.checked;
       const r = await postJSON("/api/enrich_contacts", payload);
       eresult.textContent = `Enriching ${r.count} leads…`;
       pollEnrich();

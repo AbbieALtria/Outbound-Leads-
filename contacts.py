@@ -18,6 +18,7 @@ import re
 
 import requests
 
+import db
 import site_contacts
 
 # People Search. The older mixed_people/search is deprecated for API callers and
@@ -220,7 +221,7 @@ def worst_case_credits(conn, lead_ids, want_company_size, reveal_email, reveal_p
 
 
 def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
-                 want_company_size=True, log=print):
+                 want_company_size=True, force=False, log=print):
     """Enrich each website-having lead with a decision-maker via Apollo — as a
     WATERFALL over Outscraper's own enrichment:
       - if BOTH contact and email are already present (Outscraper's
@@ -234,8 +235,15 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     ai_calls, ai_hits, ai_capped, ai_cache_hits, ai_error}
     where `checked` is Apollo calls MADE and `skipped_already_enriched` is calls
     avoided. The ai_* counters are the Claude tier of the website step (see
-    site_contacts.AIBudget); all zero when ANTHROPIC_API_KEY is unset."""
+    site_contacts.AIBudget); all zero when ANTHROPIC_API_KEY is unset.
+
+    Apollo is asked about a lead (people search) and a domain (company lookup)
+    at most once, whatever it answered — a partial or empty answer is recorded
+    too (leads.apollo_checked_at, apollo_org_lookups) — and skipped after that,
+    counted in `skipped_already_looked_up`. `force=True` (an admin's explicit
+    re-enrich) asks again."""
     checked = enriched = emails = phones = skipped = org_calls = site_hits = 0
+    already = 0        # lookups skipped because Apollo was asked before
     org_charged = 0    # lookups that returned data — the ones Apollo bills for
     site_tried = 0     # leads the free website tier could actually attempt
     error = ""
@@ -263,6 +271,16 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         # returns {} without contacting Apollo when there is no key, so counting
         # unconditionally reported lookups that never happened — and, through
         # `credits`, spending that never occurred.
+        if dom and enabled() and not org_blocked and dom not in org_cache and not force:
+            # Asked before (this answer may be partial or empty): reuse it, free.
+            prior = conn.execute(
+                "SELECT employee_count, revenue, industry FROM apollo_org_lookups "
+                "WHERE domain = ?", (dom,)).fetchone()
+            if prior is not None:
+                org_cache[dom] = ({"employee_count": prior["employee_count"],
+                                   "revenue": prior["revenue"], "industry": prior["industry"]}
+                                  if prior["employee_count"] is not None else {})
+                already += 1
         if dom and enabled() and not org_blocked and dom not in org_cache:
             try:
                 org_cache[dom] = enrich_organization(website)
@@ -271,6 +289,17 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
                 org_calls += 1
                 if org_cache[dom]:
                     org_charged += 1
+                # Remember the lookup whatever it returned, so a thin answer is
+                # not bought again next run.
+                o = org_cache[dom]
+                conn.execute(
+                    "INSERT INTO apollo_org_lookups (domain, checked_at, employee_count, "
+                    "revenue, industry) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(domain) DO UPDATE SET checked_at = excluded.checked_at, "
+                    "employee_count = excluded.employee_count, revenue = excluded.revenue, "
+                    "industry = excluded.industry",
+                    (dom, db.now_iso(), o.get("employee_count"), o.get("revenue", ""),
+                     o.get("industry", "")))
             except PermissionError as e:
                 # Refused by the plan — it will be refused for every remaining
                 # domain too, so stop paying attempts and record why.
@@ -327,11 +356,19 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         if not needs_apollo:
             skipped += 1
             continue
+        # Already asked about this lead (found or not, revealed or not): don't
+        # search again, and don't pay for the same reveal again.
+        asked_before = ("apollo_checked_at" in row.keys()) and bool(row["apollo_checked_at"])
+        if asked_before and not force:
+            already += 1
+            continue
         checked += 1
         try:
             # Only pay for the email reveal when the email is actually missing.
             info = find_contact(website, reveal_email=reveal_email and not have_email,
                                 reveal_phone=reveal_phone)
+            conn.execute("UPDATE leads SET apollo_checked_at = ? WHERE id = ?",
+                         (db.now_iso(), row["id"]))
         except Exception as e:
             # Surface the first failure (e.g. bad key / plan / rate limit) instead
             # of silently finding nothing.
@@ -376,6 +413,7 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     credits = org_charged + emails + (phones * 8)
     return {"checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
+            "skipped_already_looked_up": already,
             "org_calls": org_calls, "site_hits": site_hits,
             "site_tried": site_tried, "credits": credits,
             "org_error": org_error, "error": error, **ai.summary()}

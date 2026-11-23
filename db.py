@@ -12,6 +12,7 @@ left in place untouched.
 """
 
 import csv
+import hashlib
 import json
 import os
 import re
@@ -457,6 +458,10 @@ LEAD_EXTRA_COLUMNS = {
     # invalid / unknown, '' = never checked. Exports leave out an invalid email.
     "email_status": "TEXT NOT NULL DEFAULT ''",
     "email_checked_at": "TEXT",
+    # When Apollo's people search last ran for this lead — set whether or not it
+    # found anyone, so a lead is never searched (and its reveals never paid for)
+    # twice unless an admin forces a re-enrich.
+    "apollo_checked_at": "TEXT",
 }
 
 # Extra columns on pull_runs added after first release.
@@ -687,6 +692,17 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 CREATE INDEX IF NOT EXISTS idx_campaigns_vici ON campaigns(vici_campaign_id);
 
+-- Every Apollo company lookup ever made, by domain, including the ones that came
+-- back partial or empty. A domain in here is not looked up again (each lookup
+-- costs a credit) unless an admin forces a re-enrich.
+CREATE TABLE IF NOT EXISTS apollo_org_lookups (
+    domain TEXT PRIMARY KEY,
+    checked_at TEXT NOT NULL,
+    employee_count INTEGER,
+    revenue TEXT NOT NULL DEFAULT '',
+    industry TEXT NOT NULL DEFAULT ''
+);
+
 """
 
 # Extra columns on offers (the old campaigns table) added after its first release.
@@ -695,6 +711,10 @@ OFFER_EXTRA_COLUMNS = {
     "enabled": "INTEGER NOT NULL DEFAULT 1",
     # JSON list of review keywords that signal this offer's pain (review_pain_match).
     "pain_keywords": "TEXT NOT NULL DEFAULT '[]'",
+    # 1 once a person has changed this offer (any field). The preset refresh on
+    # start-up only ever touches rows still at 0, so a hand-tuned offer is never
+    # reverted. Rows that predate the column are backfilled to 1 (see init_db).
+    "user_edited": "INTEGER NOT NULL DEFAULT 0",
 }
 
 # Extra columns on requeue_leads added after first release.
@@ -819,6 +839,12 @@ def init_db(db_path=DB_FILE):
     _ensure_lead_columns(conn)
     _ensure_columns(conn, "pull_runs", PULL_RUN_EXTRA_COLUMNS)
     _ensure_columns(conn, "offers", OFFER_EXTRA_COLUMNS)
+    # Offers that existed before user_edited did may have been hand-tuned; there
+    # is no way to tell which, so all of them count as edited. Runs once, before
+    # the presets are seeded, so a fresh database's presets start at 0.
+    if get_setting(conn, "offers_user_edited_backfill_v1", "") != "done":
+        conn.execute("UPDATE offers SET user_edited = 1")
+        set_setting(conn, "offers_user_edited_backfill_v1", "done")
     _ensure_columns(conn, "requeue_leads", REQUEUE_EXTRA_COLUMNS)
     _ensure_columns(conn, "clients", CLIENT_EXTRA_COLUMNS)
     _ensure_columns(conn, "users", USER_EXTRA_COLUMNS)
@@ -923,13 +949,15 @@ OFFER_PRESET_VERSION = 2
 def _refresh_preset_offers(conn):
     """One-time-per-version refresh of preset offers' rules + pain_keywords, so a
     preset's scoring change reaches databases seeded before it. Only rows with
-    is_preset = 1 are touched."""
+    is_preset = 1 that nobody has edited (user_edited = 0) are touched: a preset
+    an admin tuned by hand keeps the admin's values, whatever the code says."""
     import json
     if int(get_setting(conn, "offer_preset_version", "0") or 0) >= OFFER_PRESET_VERSION:
         return
     for slug, info in OFFER_PRESETS.items():
         conn.execute(
-            "UPDATE offers SET rules = ?, pain_keywords = ? WHERE slug = ? AND is_preset = 1",
+            "UPDATE offers SET rules = ?, pain_keywords = ? "
+            "WHERE slug = ? AND is_preset = 1 AND user_edited = 0",
             (json.dumps(info["rules"]), json.dumps(info.get("pain_keywords", [])), slug),
         )
     set_setting(conn, "offer_preset_version", str(OFFER_PRESET_VERSION))
@@ -1137,57 +1165,116 @@ def _migrate_cities(conn):
         )
 
 
-def _migrate_leads(conn):
-    if conn.execute("SELECT 1 FROM leads LIMIT 1").fetchone():
-        return
-
-    # Old daily CSVs carry the full lead details; import them first.
-    for csv_file in sorted(SCRIPT_DIR.glob("leads_*.csv")):
-        m = re.search(r"leads_(\d{4}-\d{2}-\d{2})\.csv$", csv_file.name)
-        pulled = m.group(1) if m else str(date.today())
-        try:
-            with open(csv_file, encoding="utf-8", newline="") as f:
-                for row in csv.DictReader(f):
-                    phone = (row.get("phone") or "").strip()
-                    name = (row.get("business_name") or "").strip()
-                    if not phone or not name:
-                        continue
-                    conn.execute(
-                        "INSERT OR IGNORE INTO leads (phone, business_name, address, city, state, "
-                        "website, category, industry, score, call_hook, pulled_date) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            phone, name,
-                            row.get("address") or "",
-                            row.get("city") or "",
-                            row.get("state") or "",
-                            row.get("website") or "",
-                            row.get("category") or "",
-                            row.get("industry") or "",
-                            int(row.get("score") or 0),
-                            row.get("call_hook") or "",
-                            pulled,
-                        ),
-                    )
-        except (OSError, csv.Error):
-            continue
-
-    # Anything in the old dedupe DB not covered by a CSV still counts as seen:
-    # import it as a bare lead so it is never served again.
+def _legacy_sources():
+    """The legacy files a first start may import: daily CSV exports and the old
+    seen-leads database, oldest CSV first."""
+    files = sorted(SCRIPT_DIR.glob("leads_*.csv"))
     if OLD_SEEN_DB.exists():
-        old = sqlite3.connect(OLD_SEEN_DB)
-        try:
-            rows = old.execute(
-                "SELECT phone, business_name, first_seen_date FROM seen_leads"
-            ).fetchall()
-        except sqlite3.Error:
-            rows = []
-        finally:
-            old.close()
-        for phone, name, first_seen in rows:
-            if not phone:
+        files.append(OLD_SEEN_DB)
+    return files
+
+
+def _file_stamp(path):
+    """'<size>:<sha256 prefix>' — the marker value that says exactly which
+    version of a legacy file was imported, so an edited file counts as new."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return f"{path.stat().st_size}:{h.hexdigest()[:16]}"
+
+
+def _import_legacy_csv(conn, csv_file):
+    m = re.search(r"leads_(\d{4}-\d{2}-\d{2})\.csv$", csv_file.name)
+    pulled = m.group(1) if m else str(date.today())
+    n = 0
+    with open(csv_file, encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            phone = (row.get("phone") or "").strip()
+            name = (row.get("business_name") or "").strip()
+            if not phone or not name:
                 continue
-            conn.execute(
-                "INSERT OR IGNORE INTO leads (phone, business_name, pulled_date) VALUES (?, ?, ?)",
-                (phone.strip(), (name or "(unknown)").strip(), first_seen or str(date.today())),
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO leads (phone, business_name, address, city, state, "
+                "website, category, industry, score, call_hook, pulled_date) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    phone, name,
+                    row.get("address") or "",
+                    row.get("city") or "",
+                    row.get("state") or "",
+                    row.get("website") or "",
+                    row.get("category") or "",
+                    row.get("industry") or "",
+                    int(row.get("score") or 0),
+                    row.get("call_hook") or "",
+                    pulled,
+                ),
             )
+            n += cur.rowcount or 0
+    return n
+
+
+def _import_old_seen_db(conn, path):
+    """Anything in the old dedupe DB not covered by a CSV still counts as seen:
+    import it as a bare lead so it is never served again."""
+    old = sqlite3.connect(path)
+    try:
+        rows = old.execute(
+            "SELECT phone, business_name, first_seen_date FROM seen_leads"
+        ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        old.close()
+    n = 0
+    for phone, name, first_seen in rows:
+        if not phone:
+            continue
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO leads (phone, business_name, pulled_date) VALUES (?, ?, ?)",
+            (phone.strip(), (name or "(unknown)").strip(), first_seen or str(date.today())),
+        )
+        n += cur.rowcount or 0
+    return n
+
+
+def _migrate_leads(conn, log=print):
+    """Import the legacy lead files exactly once each.
+
+    Each file gets a settings marker, legacy_import:<file name>, holding the
+    size and hash that were imported. A file whose marker matches is skipped
+    (and says so), so a restart or redeploy never re-imports; an edited file
+    has a new stamp and is imported again (INSERT OR IGNORE keeps that safe).
+
+    The old rule — import only when the leads table is empty — is kept for a
+    database that has no marker yet: one that already holds leads predates the
+    markers, so its files are stamped as already imported without touching the
+    rows, which is exactly what the old gate did."""
+    has_leads = conn.execute("SELECT 1 FROM leads LIMIT 1").fetchone() is not None
+    for path in _legacy_sources():
+        key = f"legacy_import:{path.name}"
+        try:
+            stamp = _file_stamp(path)
+        except OSError as e:
+            log(f"[legacy-import] cannot read {path.name}: {e}")
+            continue
+        done = get_setting(conn, key)
+        if done == stamp:
+            log(f"[legacy-import] skipping {path.name}: already imported ({stamp})")
+            continue
+        if has_leads and done is None:
+            log(f"[legacy-import] {path.name}: database already holds leads, "
+                f"marking as imported without importing")
+            set_setting(conn, key, stamp)
+            continue
+        try:
+            if path == OLD_SEEN_DB:
+                n = _import_old_seen_db(conn, path)
+            else:
+                n = _import_legacy_csv(conn, path)
+        except (OSError, csv.Error) as e:
+            log(f"[legacy-import] {path.name} failed: {e}")
+            continue
+        set_setting(conn, key, stamp)
+        log(f"[legacy-import] imported {path.name}: {n} new lead(s) ({stamp})")

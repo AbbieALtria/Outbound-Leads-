@@ -2285,12 +2285,13 @@ def verify_emails_status():
 _enrich_lock = threading.Lock()
 
 
-def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_id=None):
+def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_id=None,
+                   force=False):
     try:
         conn = db.connect()
         rows = conn.execute(
-            f"SELECT id, website, contact, email, employee_count FROM leads "
-            f"WHERE id IN ({','.join('?' * len(lead_ids))})",
+            f"SELECT id, website, contact, email, employee_count, apollo_checked_at "
+            f"FROM leads WHERE id IN ({','.join('?' * len(lead_ids))})",
             lead_ids,
         ).fetchall()
         # Company lookups cost a credit each and feed only company_size_fit, so
@@ -2299,7 +2300,7 @@ def _enrich_worker(lead_ids, reveal_email, reveal_phone, campaign_id=None, user_
         result = contacts.enrich_leads(conn, rows, reveal_email=reveal_email,
                                        reveal_phone=reveal_phone,
                                        want_company_size=want_size,
-                                       log=lambda *_: None)
+                                       force=force, log=lambda *_: None)
         # Record what was actually spent, not the estimate — the budget must
         # track real usage, and a run that finds nothing still costs lookups.
         users.record_credits(conn, user_id, result.get("credits", 0),
@@ -2387,10 +2388,15 @@ def enrich_contacts():
                 f"admin to raise your credit limit."}), 403
     if not _enrich_lock.acquire(blocking=False):
         return jsonify({"error": "An enrichment run is already in progress"}), 409
+    # Leads and domains Apollo has already been asked about are skipped unless
+    # the admin ticked "re-check" in the confirmation: that is the one way to
+    # spend a credit on the same lookup twice.
+    force = bool(args.get("force"))
     threading.Thread(
         target=_enrich_worker,
         args=(lead_ids, reveal_email, reveal_phone, campaign_id,
-              user["id"] if user else None), daemon=True
+              user["id"] if user else None),
+        kwargs={"force": force}, daemon=True
     ).start()
     return jsonify({"ok": True, "count": len(lead_ids)})
 
@@ -2585,6 +2591,8 @@ def edit_campaign(campaign_id):
         kws = [k.strip() for k in request.form.get("pain_keywords", "").split(",") if k.strip()]
         conn.execute("UPDATE offers SET pain_keywords = ? WHERE id = ?",
                      (json.dumps(kws), campaign_id))
+    # A person touched this offer: the preset refresh must leave it alone from now on.
+    conn.execute("UPDATE offers SET user_edited = 1 WHERE id = ?", (campaign_id,))
     conn.commit()
     return redirect(url_for("settings"))
 
