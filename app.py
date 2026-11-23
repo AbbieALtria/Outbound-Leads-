@@ -21,6 +21,7 @@ from flask import (Flask, g, jsonify, redirect, render_template,
                    request, session, url_for)
 
 import ai_industries
+import budget
 import nppes
 import compliance
 import contacts
@@ -611,8 +612,11 @@ def campaign_suggest_industries(campaign_id):
     if not ai_industries.enabled():
         error = ("AI suggestions are off — set ANTHROPIC_API_KEY in Railway → "
                  "Variables to enable them.")
+    elif budget.remaining(conn, "claude") == 0:
+        error = budget.cap_message(conn, "claude") + " — try again tomorrow or raise the cap in Settings."
     else:
         try:
+            budget.record(conn, "claude", 1)
             suggestions = ai_industries.suggest(
                 camp["name"], offer["name"] if offer else "",
                 existing, country=camp["country"] or "")
@@ -1012,6 +1016,7 @@ def settings():
         apollo_key_tail=_key_tail(contacts.api_key()),
         email_verify_enabled=email_verify.enabled(),
         email_verify_provider=email_verify.provider_name(),
+        caps=budget.usage_report(conn),
         storage=storage_status(conn),
     )
 
@@ -2645,6 +2650,11 @@ def save_general_settings():
                    "1" if request.form.get("enrich_reveal_email") else "0")
     db.set_setting(conn, "enrich_reveal_phone",
                    "1" if request.form.get("enrich_reveal_phone") else "0")
+    # Daily caps per paid provider. 0 is "no limit" and only ever set on purpose.
+    for key, _label, _unit, _default in budget.PROVIDERS:
+        raw = (request.form.get(f"cap_{key}") or "").strip()
+        if raw.isdigit():
+            budget.set_cap(conn, key, int(raw))
     conn.commit()
     return redirect(url_for("settings"))
 

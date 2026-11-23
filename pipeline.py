@@ -19,6 +19,7 @@ from pathlib import Path
 
 import requests
 
+import budget
 import db
 import dedupe
 import geo_data
@@ -525,8 +526,20 @@ def verify_lead_phones(conn, api_key, lead_rows, run_id=None, log=print):
     phone_valid / validated_at back. Invalid numbers are marked (status stays,
     but they're excluded from dial exports). Returns a summary dict."""
     lead_rows = [r for r in lead_rows if r["phone"]]
+    # Daily cap: validate only as many numbers as today still allows; the rest
+    # stay unvalidated (still dialable) and the summary says why.
+    cap_note = ""
+    allowed = budget.allowance(conn, "phone", len(lead_rows))
+    if allowed < len(lead_rows):
+        lead_rows = lead_rows[:allowed]
+        capped = True
+    else:
+        capped = False
     if not lead_rows:
-        return {"checked": 0, "invalid": 0}
+        if capped:
+            cap_note = budget.cap_message(conn, "phone")
+            log(f"  {cap_note}")
+        return {"checked": 0, "invalid": 0, "unmatched": 0, "cap_note": cap_note}
     if run_id:
         conn.execute("UPDATE pull_runs SET current_city = ? WHERE id = ?",
                      (f"validating {len(lead_rows)} phone numbers", run_id))
@@ -548,10 +561,15 @@ def verify_lead_phones(conn, api_key, lead_rows, run_id=None, log=print):
         if not info["valid"]:
             invalid += 1
     conn.commit()
+    budget.record(conn, "phone", len(lead_rows))    # billed per number asked
     unmatched = len(lead_rows) - checked
     if unmatched:
         log(f"  {unmatched} number(s) got no usable answer and stay unvalidated")
-    return {"checked": checked, "invalid": invalid, "unmatched": unmatched}
+    if capped:
+        cap_note = budget.cap_message(conn, "phone")
+        log(f"  {cap_note}")
+    return {"checked": checked, "invalid": invalid, "unmatched": unmatched,
+            "cap_note": cap_note}
 
 
 # Words that mark a result as actually being in the industry asked for. Maps
@@ -993,7 +1011,10 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
         # first. Locations that return nothing new drop out; passes repeat until
         # the target is met, everyone is tapped out, or the cap is reached.
         exhausted, tried = set(), set()
+        cap_note = ""     # set when a daily cap stops the pull; goes in the summary
         for sweep_pass in range(MAX_SWEEP_PASSES):
+            if cap_note:
+                break
             if added_total >= target or _is_cancelled(conn, run_id):
                 cancelled = _is_cancelled(conn, run_id)
                 break
@@ -1017,6 +1038,8 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     f"{len(live)} location(s) this pass")
 
             for target_loc in live:
+                if cap_note:
+                    break
                 if added_total >= target or _is_cancelled(conn, run_id):
                     cancelled = _is_cancelled(conn, run_id)
                     break
@@ -1029,7 +1052,7 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                 loc_drained, loc_errored = True, False
 
                 for industry, chain_names in industries:
-                    if added_total >= target:
+                    if cap_note or added_total >= target:
                         break
                     if added_total - added_before_loc >= share:
                         break  # this location has given its share for this pass
@@ -1046,6 +1069,17 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     remaining = min(share - (added_total - added_before_loc),
                                     target - added_total)
                     pull_limit = max(MIN_PER_LOCATION, int(remaining * buffer_multiplier))
+                    if source in ("maps", "both"):
+                        # Outscraper bills per record returned, so the daily cap
+                        # is applied to the request size: ask for what is left
+                        # today, and stop cleanly once nothing is.
+                        left = budget.remaining(conn, "outscraper")
+                        if left is not None:
+                            if left <= 0:
+                                cap_note = budget.cap_message(conn, "outscraper")
+                                log(f"  {cap_note} — stopping the pull here")
+                                break
+                            pull_limit = min(pull_limit, left)
                     query_text = industry["query_template"].format(
                         industry=slug.replace("_", " "), city=city_label
                     )
@@ -1054,8 +1088,10 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                     try:
                         places = []
                         if source in ("maps", "both"):
-                            places += query_outscraper(api_key, query_text, pull_limit,
+                            fetched = query_outscraper(api_key, query_text, pull_limit,
                                                        enrich_contacts=enrich)
+                            budget.record(conn, "outscraper", len(fetched))
+                            places += fetched
                         if source in ("nppes", "both") and nppes.supports(slug):
                             # Free US provider registry. No website/reviews — those
                             # signals just don't fire for these leads.
@@ -1263,6 +1299,8 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
                 vsum = verify_lead_phones(conn, api_key, rows, run_id=run_id, log=log)
                 validation_note = (f"; verified {vsum['checked']} phones, "
                                    f"{vsum['invalid']} bad")
+                if vsum.get("cap_note"):
+                    validation_note += f"; {vsum['cap_note']}"
             except RuntimeError as e:
                 validation_note = f"; phone validation failed ({e})"
                 log(f"  WARNING: {e}")
@@ -1287,6 +1325,9 @@ def run_pull(industry_slugs, target, api_key, location=None, locations=None,
             if duplicates:
                 message += f" | {duplicates} duplicates skipped"
             status = "done"
+        if cap_note:
+            # A cap is not an error: the run closes normally with what it got.
+            message += f" | {cap_note}"
         _update_run(conn, run_id, status=status, finished_at=db.now_iso(),
                     added=added_total, current_city="", message=message)
         log(f"DONE. {message}")

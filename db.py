@@ -692,6 +692,15 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 CREATE INDEX IF NOT EXISTS idx_campaigns_vici ON campaigns(vici_campaign_id);
 
+-- Paid calls per provider per day (budget.py). One row per provider and day so
+-- every worker counts against the same daily cap.
+CREATE TABLE IF NOT EXISTS provider_usage (
+    provider TEXT NOT NULL,
+    day TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (provider, day)
+);
+
 -- Every Apollo company lookup ever made, by domain, including the ones that came
 -- back partial or empty. A domain in here is not looked up again (each lookup
 -- costs a credit) unless an admin forces a re-enrich.

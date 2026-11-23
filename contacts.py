@@ -18,6 +18,7 @@ import re
 
 import requests
 
+import budget
 import db
 import site_contacts
 
@@ -257,7 +258,23 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     touched = set()
     org_cache = {}          # domain -> org info, so a shared domain costs 1 credit
     apollo_blocked = False  # set on 401/403 — key/plan can't use the API
-    ai = site_contacts.AIBudget()   # per-run cap + counters for the Claude tier
+    cap_notes = []          # daily caps hit during this run, for the summary
+
+    def apollo_allowed():
+        """False once today's Apollo cap is used up; said once in the summary."""
+        left = budget.remaining(conn, "apollo")
+        if left is not None and left <= 0:
+            note = budget.cap_message(conn, "apollo")
+            if note not in cap_notes:
+                cap_notes.append(note)
+                log(f"  {note}")
+            return False
+        return True
+
+    # The Claude tier's per-run cap, shrunk to what today's daily cap still
+    # allows; the calls it makes are counted against that cap afterwards.
+    ai = site_contacts.AIBudget(
+        cap=budget.allowance(conn, "claude", site_contacts.AI_DEFAULT_MAX_CALLS))
     for row in lead_rows:
         website = (row["website"] if "website" in row.keys() else "") or ""
         if not website:
@@ -281,9 +298,10 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
                                    "revenue": prior["revenue"], "industry": prior["industry"]}
                                   if prior["employee_count"] is not None else {})
                 already += 1
-        if dom and enabled() and not org_blocked and dom not in org_cache:
+        if dom and enabled() and not org_blocked and dom not in org_cache and apollo_allowed():
             try:
                 org_cache[dom] = enrich_organization(website)
+                budget.record(conn, "apollo", 1)
                 # Apollo bills only when it finds something, so an empty answer
                 # is a call made and nothing charged.
                 org_calls += 1
@@ -362,9 +380,13 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
         if asked_before and not force:
             already += 1
             continue
+        if not apollo_allowed():
+            skipped += 1          # today's cap: left for another day, not "done"
+            continue
         checked += 1
         try:
             # Only pay for the email reveal when the email is actually missing.
+            budget.record(conn, "apollo", 1)
             info = find_contact(website, reveal_email=reveal_email and not have_email,
                                 reveal_phone=reveal_phone)
             conn.execute("UPDATE leads SET apollo_checked_at = ? WHERE id = ?",
@@ -411,7 +433,11 @@ def enrich_leads(conn, lead_rows, reveal_email=False, reveal_phone=False,
     # data came back. Apollo charges nothing for a request that finds nothing,
     # so counting attempts overstated the bill.
     credits = org_charged + emails + (phones * 8)
-    return {"checked": checked, "enriched": enriched, "emails": emails,
+    budget.record(conn, "claude", ai.calls)
+    if ai.capped and budget.remaining(conn, "claude") == 0:
+        cap_notes.append(budget.cap_message(conn, "claude"))
+    return {"cap_note": " | ".join(cap_notes),
+            "checked": checked, "enriched": enriched, "emails": emails,
             "phones": phones, "skipped_already_enriched": skipped,
             "skipped_already_looked_up": already,
             "org_calls": org_calls, "site_hits": site_hits,
