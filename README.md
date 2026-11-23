@@ -77,6 +77,20 @@ python app.py
 
 then open http://localhost:5000
 
+## Running tests
+
+```
+pip install -r requirements.txt pytest
+python -m pytest tests -q
+```
+
+The suite needs no API keys and no network: every paid provider is mocked and
+`tests/conftest.py` blocks outbound connections, so a test that reached a live
+API would fail rather than spend credits. It also points the data folder at a
+temporary directory, so it never touches your `leads.db`. GitHub Actions runs
+the same command on every push and pull request
+(`.github/workflows/tests.yml`), on the Python version in `.python-version`.
+
 ## One-time setup
 
 Put your Outscraper key in the [.env](.env) file
